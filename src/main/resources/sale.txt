@@ -1,0 +1,6 @@
+{"storeId":1,"category":1,"sales":100}
+{"storeId":2,"category":1,"sales":200}
+{"storeId":3,"category":1,"sales":300}
+{"storeId":4,"category":2,"sales":400}
+{"storeId":5,"category":2,"sales":500}
+{"storeId":6,"category":2,"sales":600}

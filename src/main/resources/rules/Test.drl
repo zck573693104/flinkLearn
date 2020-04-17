@@ -1,0 +1,10 @@
+package ruls
+
+import org.fuwushe.drools.Person;
+
+rule "Hello World"
+    when
+       person:Person( age >= 20 );
+    then
+       person.setWhetherFilter(true);
+end

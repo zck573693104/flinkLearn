@@ -1,0 +1,8 @@
+-m 运行模式，这里使用yarn-cluster，即yarn集群模式。
+-ys slot个数。
+-ynm Yarn application的名字。
+-yn task manager 数量。
+-yjm job manager 的堆内存大小。
+-ytm task manager 的堆内存大小。
+-d detach模式。可以运行任务后无需再控制台保持连接。
+-c 指定jar包中class全名。
