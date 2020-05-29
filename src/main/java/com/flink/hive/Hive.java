@@ -1,7 +1,9 @@
 package com.flink.hive;
 
 import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.java.BatchTableEnvironment;
 import org.apache.flink.table.catalog.*;
 import org.apache.flink.table.catalog.hive.HiveCatalog;
@@ -13,13 +15,12 @@ import java.util.Optional;
 
 public class Hive {
     public static void main(String []args) throws Exception {
-        ExecutionEnvironment execEnv = ExecutionEnvironment.getExecutionEnvironment();
-        execEnv.setParallelism(1);
-        BatchTableEnvironment tableEnv = BatchTableEnvironment.create(execEnv);
+        EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inBatchMode().build();
+        TableEnvironment tableEnv = TableEnvironment.create(settings);
         String name            = "myhive";
-        String defaultDatabase = "biz_da";
-        String hiveConfDir     = "/load/data/hive-2/hive-conf"; // a local path
-        String version         = "2.3.2";
+        String defaultDatabase = "situation";
+        String hiveConfDir     = "/load/data/hive/hive-conf"; // a local path
+        String version         = "1.2.1";
 
         HiveCatalog hiveCatalog = new HiveCatalog(name, defaultDatabase, hiveConfDir, version);
 
@@ -29,20 +30,19 @@ public class Hive {
 
         Optional<Catalog> myHive = tableEnv.getCatalog("myhive");
 
-        ObjectPath myTablePath = new ObjectPath("biz_da", "flink_test");
+        ObjectPath myTablePath = new ObjectPath("situation", "flink_test");
 // 这里可以打印
         System.out.println(myHive.get().getTable(myTablePath).getSchema());
 
         tableEnv.useCatalog("myhive");
-        Table table = tableEnv.sqlQuery("select * from biz_da.flink_test");
-        List<Row> result = tableEnv.toDataSet(table, Row.class).collect();
-        System.out.println(result);
+
+
 
 
 
         // create tablePath
         ObjectPath tablePath = new ObjectPath(
-                "biz_da",
+                "situation",
                 "flink_hive_test_partition");
 // createa partition
         CatalogPartitionSpec partitionSpec = new CatalogPartitionSpec(
@@ -69,7 +69,7 @@ public class Hive {
 
         // create tablePath
         ObjectPath dropTablePath = new ObjectPath(
-                "biz_da",
+                "situation",
                 "flink_hive_test_partition");
         hiveCatalog.dropTable(dropTablePath, true);
 

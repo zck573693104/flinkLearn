@@ -43,7 +43,6 @@ public class AsyncEsDataRequest extends RichAsyncFunction<String, Tuple2<String,
                         new RemovalListener<Object, Object>() {
                             @Override
                             public void onRemoval(RemovalNotification<Object, Object> notification) {
-                                System.out.println(notification.getKey() + " wa remove,cause is:" + notification.getCause());
                             }
                         }
                 ).build();
@@ -60,7 +59,6 @@ public class AsyncEsDataRequest extends RichAsyncFunction<String, Tuple2<String,
         //若缓存里存在,直接从缓存里读取key
         Tuple2<String, String> stationPercent = cityPercent.getIfPresent(input);
         if (stationPercent != null) {
-            System.out.println("get data from the cache :" + stationPercent);
             resultFuture.complete(Collections.singleton(stationPercent));
         } else {
             search(input, resultFuture);
@@ -70,7 +68,7 @@ public class AsyncEsDataRequest extends RichAsyncFunction<String, Tuple2<String,
 
     //异步去读Es表
     private void search(String input, ResultFuture<Tuple2<String, String>> resultFuture) {
-        SearchRequest searchRequest = new SearchRequest("my-indexs");
+        SearchRequest searchRequest = new SearchRequest("tcp-indexs");
         QueryBuilder builder = QueryBuilders.boolQuery().must(QueryBuilders.termQuery("name", input));
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
         sourceBuilder.query(builder);
@@ -86,7 +84,6 @@ public class AsyncEsDataRequest extends RichAsyncFunction<String, Tuple2<String,
                     stationPercent = new Tuple2<>(input, jsonObject.getString("age"));
                     cityPercent.put(input, stationPercent);
                 }
-                System.out.println("get data from the es :" + stationPercent);
                 resultFuture.complete(Collections.singleton(stationPercent));
             }
 

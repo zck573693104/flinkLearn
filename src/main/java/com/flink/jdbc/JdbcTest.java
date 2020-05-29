@@ -61,7 +61,7 @@ public class JdbcTest {
                 .setPassword(passWord)
                 .setFetchSize(2)
 
-                .setQuery("select * from student")
+                .setQuery("select name,age from student")
                 .setRowTypeInfo(rowTypeInfo)
                 .finish();
         DataStreamSource<Row> input1 = env.createInput(jdbcInputFormat);

@@ -45,7 +45,7 @@ public class ES5Test {
         DataStream<Tuple2<String,String>> asyncStream = AsyncDataStream.unorderedWait(input1, new AsyncEsDataRequest() ,1, TimeUnit.MINUTES, 1000).setParallelism(1);
         asyncStream.print();
 
-        DataStream<Tuple2<String,Integer>> update =   asyncStream.map(new MapFunction<Tuple2<String, String>, Tuple2<String, Integer>>() {
+        DataStream<Tuple2<String,Integer>> update =  asyncStream.map(new MapFunction<Tuple2<String, String>, Tuple2<String, Integer>>() {
             @Override
             public Tuple2<String, Integer> map(Tuple2<String, String> tuple2) throws Exception {
                 return new Tuple2<>("AXFizhOb246_9wAPymT_",50);

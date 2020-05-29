@@ -12,7 +12,6 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
-import org.fuwushe.item.*;
 import com.flink.kafka.KafkaProperties;
 import com.flink.kerberos.Kerberos;
 import com.flink.sink.mysql.SinkToMySQL;

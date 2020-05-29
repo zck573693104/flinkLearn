@@ -3,7 +3,6 @@ package com.flink.qnx;
 import com.flink.qnx.registerfunction.*;
 import com.flink.sql.udf.FromUnixTimeUDF;
 import org.apache.flink.table.api.java.StreamTableEnvironment;
-import org.fuwushe.qnx.registerfunction.*;
 
 public class RegisterFunctionUtil {
     public static void register(StreamTableEnvironment tableEnv){

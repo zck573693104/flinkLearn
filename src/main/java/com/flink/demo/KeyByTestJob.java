@@ -22,12 +22,19 @@ public class KeyByTestJob {
 //                    .map((MapFunction<Tuple2<Long, Long>, String>) longLongTuple2 -> "key:" + longLongTuple2.f0 + ",value:" + longLongTuple2.f1)
 //                .print();
         env.setParallelism(1);
+        //minby
+        // (1,4,1)
+        //(1,1,2)
+        //(1,1,2)
+        //min
+        // (1,4,1)
+        //(1,1,1)
+        //(1,1,1)
         env.fromElements(Tuple3.of(1, 4,1), Tuple3.of(1, 1, 2), Tuple3.of(1, 3, 3))
                 .keyBy(0)
-                .minBy(1)
+                .min(1)
                 .print();
-        env.fromElements(  Tuple2.of("e",new OrderEvent("1","1")))
-                .addSink(new SinkMybatis<>());
+
         env.execute("execute");
     }
 }
