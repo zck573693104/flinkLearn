@@ -18,6 +18,8 @@ public class HiveTest {
 
     public static void main(String []args) throws Exception {
         //Kerberos.getKerberosHdfs();
+        System.setProperty("HADOOP_USER_NAME", "work");
+
         EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inBatchMode().build();
         TableEnvironment tableEnv = TableEnvironment.create(settings);
 
@@ -40,11 +42,12 @@ public class HiveTest {
        tableEnv.loadModule("hiveModule",new HiveModule(version));
 
         tableEnv.useCatalog(CATALOG_NAME);
+
+        tableEnv.sqlUpdate("insert into situation.flink_test values (3,'kcz3')");
         Table table = tableEnv.sqlQuery(" select * from situation.flink_test");
         List<Row> rowList =  TableUtils.collectToList(table);
         System.out.println(rowList);
 
 
-        tableEnv.execute("test");
     }
 }
