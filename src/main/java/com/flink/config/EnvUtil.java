@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 public class EnvUtil {
 
     private static final String TEST_HDFS_PATH = "hdfs://master:8020/user/flink/test/checkpoints/";
-    private static final String PROD_HDFS_PATH = "hdfs://bg03.situation.360es.net:8020/user/flink/prod/checkpoints/";
+    private static final String PROD_HDFS_PATH = "hdfs://master:8020/user/flink/prod/checkpoints/";
 
     public static StreamExecutionEnvironment getProFs(String prodOrTest) {
         String hdfsPath = null ;

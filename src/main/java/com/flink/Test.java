@@ -2,6 +2,8 @@ package com.flink;
 
 import com.alibaba.fastjson.JSONObject;
 import com.flink.drools.Person;
+import com.google.common.hash.HashCode;
+import com.google.common.hash.Hashing;
 import org.drools.core.impl.InternalKnowledgeBase;
 import org.drools.core.impl.KnowledgeBaseFactory;
 import org.kie.api.KieBase;
@@ -20,10 +22,15 @@ import org.kie.internal.builder.KnowledgeBuilderErrors;
 import org.kie.internal.builder.KnowledgeBuilderFactory;
 import org.kie.internal.io.ResourceFactory;
 
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 
 public class Test {
     public static void main(String []args) throws Exception {
+        ;
+        System.out.println(Hashing.murmur3_128().hashUnencodedChars("abc").padToLong());
+        System.out.println(Hashing.murmur3_128().hashString("abc", StandardCharsets.UTF_8).asLong());
         String sourceDDL = "CREATE TABLE sourceTable (userId VARCHAR, eventType VARCHAR) WITH (\n"
                 + "\t'connector.type' = 'kafka',\n" + "\t'connector.version' = 'universal',\n"
                 + "\t'connector.startup-mode' = 'earliest-offset',\n" + "\t'connector.topic' = 'browTopic',\n"
