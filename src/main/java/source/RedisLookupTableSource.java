@@ -34,7 +34,7 @@ public class RedisLookupTableSource implements
         this.port = port;
         this.cacheMaxSize = cacheMaxSize;
         this.cacheExpireMs = cacheExpireMs;
-        this.returnType = new RowTypeInfo(typeInfos, typeNames);    }
+        this.returnType = new RowTypeInfo(fieldTypes, fieldNames);    }
 
     //返回同步的，我们用的是异步的，这边直接返回null
     @Override

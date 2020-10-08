@@ -37,7 +37,7 @@ public class SchemaJob {
             jobName = parameterTool.get("jobName","test");
             CHECKPOINT_PATH = parameterTool.get("checkpoint_path");
             PARALLELISM = parameterTool.getInt("parallelism", 1);
-            sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path")));
+            sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path","/load/data/flink_csv.sql")));
 
         }
 

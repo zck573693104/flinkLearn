@@ -6,6 +6,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.shaded.guava18.com.google.common.cache.Cache;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.table.sinks.TableSink;
 import org.apache.flink.table.sinks.UpsertStreamTableSink;
 import org.apache.flink.types.Row;
@@ -54,10 +55,7 @@ public class RedisUpsertTableSink implements UpsertStreamTableSink<Row> {
         return null;
     }
 
-    @Override
-    public void emitDataStream(DataStream<Tuple2<Boolean, Row>> dataStream) {
-
-    }
+ 
 
     @Override
     public TableSink<Tuple2<Boolean, Row>> configure(String[] strings, TypeInformation<?>[] typeInformations) {
@@ -66,6 +64,11 @@ public class RedisUpsertTableSink implements UpsertStreamTableSink<Row> {
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    @Override
+    public DataStreamSink<?> consumeDataStream(DataStream<Tuple2<Boolean, Row>> dataStream) {
+        return null;
     }
 
     public static class Builder {
