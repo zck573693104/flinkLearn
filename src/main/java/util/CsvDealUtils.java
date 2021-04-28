@@ -26,7 +26,6 @@ public class CsvDealUtils {
             }
             if (ch == '"') {
                 sb.append("\"");
-
             } else {
                 String str = whetherReplace ? String.valueOf(ch).replace("\n", " ") : String.valueOf(ch);
                 sb.append(str);

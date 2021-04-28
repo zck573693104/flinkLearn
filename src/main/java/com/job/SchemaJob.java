@@ -4,6 +4,7 @@ package com.job;
 import com.SqlCommandParser;
 import com.utils.ReadFileUtil;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
@@ -20,7 +21,7 @@ import java.util.Optional;
 
 public class SchemaJob {
 
-    private static Logger logger = LoggerFactory.getLogger(com.job.SchemaJob.class);
+    private static Logger logger = LoggerFactory.getLogger(SchemaJob.class);
 
     private static List<String> sqlList;
 
@@ -41,7 +42,9 @@ public class SchemaJob {
 
         }
 
-        StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.getExecutionEnvironment();
+        StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
+
+
         streamEnv.setParallelism(PARALLELISM);
         EnvironmentSettings settings = EnvironmentSettings.newInstance().inStreamingMode().useBlinkPlanner().build();
         StreamTableEnvironment tableEnv = StreamTableEnvironment.create(streamEnv, settings);
@@ -66,6 +69,8 @@ public class SchemaJob {
         switch (cmdCall.command) {
             case CREATE_TABLE:
                 callCreateTable(cmdCall.operands[0], env);
+            case CREATE_VIEW:
+                callCreateView(cmdCall, env);
                 break;
             case INSERT_INTO:
             case INSERT_OVERWRITE:
@@ -79,6 +84,10 @@ public class SchemaJob {
         }
     }
 
+    private static void callCreateView(SqlCommandParser.SqlCommandCall cmdCall, StreamTableEnvironment env) {
+        env.createTemporaryView(cmdCall.operands[0],env.sqlQuery(cmdCall.operands[1]));
+    }
+
     /**
      * 版本升级 会更改API方式  一类型一处理方式
      * @param sql
@@ -86,16 +95,15 @@ public class SchemaJob {
      * @throws IOException
      */
     public static void callInsertInto(String sql, StreamTableEnvironment env) throws IOException {
-        env.sqlUpdate(sql);
+        env.executeSql(sql);
 
     }
 
     private static void callCreateTable(String sql, StreamTableEnvironment env) throws IOException {
-        env.sqlUpdate(sql);
+        env.executeSql(sql);
     }
 
     public static void callSelect(String sql, StreamTableEnvironment env) throws IOException {
-        Table table = env.sqlQuery(sql);
-        env.toAppendStream(table, Row.class).print();
+       env.executeSql(sql).print();
     }
 }
