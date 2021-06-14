@@ -69,6 +69,7 @@ public class SchemaJob {
         switch (cmdCall.command) {
             case CREATE_TABLE:
                 callCreateTable(cmdCall.operands[0], env);
+                break;
             case CREATE_VIEW:
                 callCreateView(cmdCall, env);
                 break;
