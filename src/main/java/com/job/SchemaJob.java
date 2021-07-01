@@ -3,16 +3,16 @@ package com.job;
 
 import com.SqlCommandParser;
 import com.utils.ReadFileUtil;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
-import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
-import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -32,35 +32,31 @@ public class SchemaJob {
     private static int PARALLELISM;
 
     public static void main(String[] args) throws Exception {
-
         if (args.length != 0) {
             ParameterTool parameterTool = ParameterTool.fromArgs(args);
-            jobName = parameterTool.get("jobName","test");
+            jobName = parameterTool.get("jobName", "test");
             CHECKPOINT_PATH = parameterTool.get("checkpoint_path");
             PARALLELISM = parameterTool.getInt("parallelism", 1);
-            sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path","/load/data/flink_csv.sql")));
+            sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path", "/load/data/flink_csv.sql")));
 
         }
-
         StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
-
-
         streamEnv.setParallelism(PARALLELISM);
-        EnvironmentSettings settings = EnvironmentSettings.newInstance().inStreamingMode().useBlinkPlanner().build();
-        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(streamEnv, settings);
-        streamEnv.setStateBackend(new MemoryStateBackend());
-
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(streamEnv);
         for (String sql : sqlList) {
-            Optional<SqlCommandParser.SqlCommandCall> sqlCommand = SqlCommandParser.parse(sql);
-            callCommand(sqlCommand.get(), tableEnv);
+            if (StringUtils.isNotBlank(sql)) {
+                Optional<SqlCommandParser.SqlCommandCall> sqlCommand = SqlCommandParser.parse(sql);
+                if(sqlCommand.isPresent()) {
+                    callCommand(sqlCommand.get(), tableEnv);
+                }
+            }
         }
-
-
         streamEnv.execute(jobName);
     }
 
     /**
      * 此处支持非常多的case  具体查看SqlCommand
+     *
      * @param cmdCall
      * @param env
      * @throws Exception
@@ -86,11 +82,12 @@ public class SchemaJob {
     }
 
     private static void callCreateView(SqlCommandParser.SqlCommandCall cmdCall, StreamTableEnvironment env) {
-        env.createTemporaryView(cmdCall.operands[0],env.sqlQuery(cmdCall.operands[1]));
+        env.createTemporaryView(cmdCall.operands[0], env.sqlQuery(cmdCall.operands[1]));
     }
 
     /**
      * 版本升级 会更改API方式  一类型一处理方式
+     *
      * @param sql
      * @param env
      * @throws IOException
@@ -105,6 +102,6 @@ public class SchemaJob {
     }
 
     public static void callSelect(String sql, StreamTableEnvironment env) throws IOException {
-       env.executeSql(sql).print();
+        env.executeSql(sql).print();
     }
 }
