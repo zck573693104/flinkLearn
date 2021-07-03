@@ -32,21 +32,18 @@ public class SchemaJob {
     private static int PARALLELISM;
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 0) {
-            ParameterTool parameterTool = ParameterTool.fromArgs(args);
-            jobName = parameterTool.get("jobName", "test");
-            CHECKPOINT_PATH = parameterTool.get("checkpoint_path");
-            PARALLELISM = parameterTool.getInt("parallelism", 1);
-            sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path", "/load/data/flink_csv.sql")));
+        ParameterTool parameterTool = ParameterTool.fromArgs(args);
+        jobName = parameterTool.get("jobName", "test");
+        CHECKPOINT_PATH = parameterTool.get("checkpoint_path");
+        PARALLELISM = parameterTool.getInt("parallelism", 1);
+        sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path", "/load/data/flink_csv.sql")));
 
-        }
-        StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
-        streamEnv.setParallelism(PARALLELISM);
+        StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.createLocalEnvironment(new Configuration());
         StreamTableEnvironment tableEnv = StreamTableEnvironment.create(streamEnv);
         for (String sql : sqlList) {
             if (StringUtils.isNotBlank(sql)) {
                 Optional<SqlCommandParser.SqlCommandCall> sqlCommand = SqlCommandParser.parse(sql);
-                if(sqlCommand.isPresent()) {
+                if (sqlCommand.isPresent()) {
                     callCommand(sqlCommand.get(), tableEnv);
                 }
             }

@@ -1,27 +1,24 @@
 package com.utils;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.util.Arrays;
 
 public class ReadFileUtil {
 
     public static String[] readFileByLines(String fileName) throws IOException {
-        File file = new File(fileName);
-        BufferedReader reader = null;
-        StringBuilder sb = new StringBuilder();
-        reader = new BufferedReader(new FileReader(file));
-        String tempString = null;
-        while ((tempString = reader.readLine()) != null) {
-            sb.append(tempString);
-        }
-        reader.close();
-        return sb.toString().split(";");
+        String res = FileUtils.readFileToString(new File(fileName), Charset.defaultCharset());
+        return res.split(";");
     }
 
     public static void main(String []args) throws IOException {
-        System.out.println(readFileByLines("/load/data/pre.txt").toString());
+        System.out.println(Arrays.toString(readFileByLines("/load/data/flink_csv.sql")));
     }
 }
 
