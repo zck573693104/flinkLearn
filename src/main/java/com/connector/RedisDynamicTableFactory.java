@@ -26,8 +26,8 @@ public class RedisDynamicTableFactory implements DynamicTableSourceFactory, Dyna
  
     /**
      * 这里没有实现 source 
-     * @param context
-     * @return
+     * @param context ctx
+     * @return DynamicTableSource
      */
     @Override
     public DynamicTableSource createDynamicTableSource(Context context) {
@@ -42,7 +42,11 @@ public class RedisDynamicTableFactory implements DynamicTableSourceFactory, Dyna
     public String factoryIdentifier() {
         return "redis";
     }
- 
+
+    /**
+     * 必选with参数
+     * @return options
+     */
     @Override
     public Set<ConfigOption<?>> requiredOptions() {
         final Set<ConfigOption<?>> options = new HashSet();
@@ -50,11 +54,16 @@ public class RedisDynamicTableFactory implements DynamicTableSourceFactory, Dyna
         options.add(RedisOptions.PORT);
         return options;
     }
- 
+
+    /**
+     * 可选实现 with 参数
+     * @return options
+     */
     @Override
     public Set<ConfigOption<?>> optionalOptions() {
         final Set<ConfigOption<?>> options = new HashSet();
         options.add(RedisOptions.EXPIRE);
+        options.add(RedisOptions.COMMAND);
         return options;
     }
 }
