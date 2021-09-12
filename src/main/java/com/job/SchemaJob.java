@@ -6,9 +6,7 @@ import com.utils.ReadFileUtil;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,9 +21,9 @@ public class SchemaJob {
 
     private static Logger logger = LoggerFactory.getLogger(SchemaJob.class);
 
-    private static List<String> sqlList;
+    private static List<String> SQLS;
 
-    private static String jobName;
+    private static String JOB_NAME;
 
     private static String CHECKPOINT_PATH;
 
@@ -33,10 +31,10 @@ public class SchemaJob {
 
     public static void main(String[] args) throws Exception {
         ParameterTool parameterTool = ParameterTool.fromArgs(args);
-        jobName = parameterTool.get("jobName", "test");
+        JOB_NAME = parameterTool.get("jobName", "test");
         CHECKPOINT_PATH = parameterTool.get("checkpoint_path");
         PARALLELISM = parameterTool.getInt("parallelism", 1);
-        sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path", "/load/data/flink_csv.sql")));
+        SQLS = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path", "/load/data/flink_csv.sql")));
 
         StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.createLocalEnvironment(new Configuration());
         StreamTableEnvironment tEnv = StreamTableEnvironment.create(streamEnv);
@@ -50,8 +48,8 @@ public class SchemaJob {
         // enable two-phase, i.e. local-global aggregation
         configuration.setString("table.optimizer.agg-phase-strategy", "TWO_PHASE");
         configuration.setString("table.optimizer.distinct-agg.split.enabled", "true");
-        configuration.setString("pipeline.name", Common.jobName);
-        for (String sql : sqlList) {
+        configuration.setString("pipeline.name", JOB_NAME);
+        for (String sql : SQLS) {
             if (StringUtils.isNotBlank(sql)) {
                 Optional<SqlCommandParser.SqlCommandCall> sqlCommand = SqlCommandParser.parse(sql);
                 if (sqlCommand.isPresent()) {
@@ -59,7 +57,7 @@ public class SchemaJob {
                 }
             }
         }
-        streamEnv.execute(jobName);
+        streamEnv.execute(JOB_NAME);
     }
 
     /**
