@@ -50,6 +50,7 @@ public class SchemaJob {
         // enable two-phase, i.e. local-global aggregation
         configuration.setString("table.optimizer.agg-phase-strategy", "TWO_PHASE");
         configuration.setString("table.optimizer.distinct-agg.split.enabled", "true");
+        configuration.setString("pipeline.name", Common.jobName);
         for (String sql : sqlList) {
             if (StringUtils.isNotBlank(sql)) {
                 Optional<SqlCommandParser.SqlCommandCall> sqlCommand = SqlCommandParser.parse(sql);
