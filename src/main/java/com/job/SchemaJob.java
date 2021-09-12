@@ -39,12 +39,22 @@ public class SchemaJob {
         sqlList = Arrays.asList(ReadFileUtil.readFileByLines(parameterTool.get("path", "/load/data/flink_csv.sql")));
 
         StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.createLocalEnvironment(new Configuration());
-        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(streamEnv);
+        StreamTableEnvironment tEnv = StreamTableEnvironment.create(streamEnv);
+        // access flink configuration
+        Configuration configuration = tEnv.getConfig().getConfiguration();
+        // set low-level key-value options
+        configuration.setString("table.exec.mini-batch.enabled", "true");
+        // local-global aggregation depends on mini-batch is enabled
+        configuration.setString("table.exec.mini-batch.allow-latency", "5 s");
+        configuration.setString("table.exec.mini-batch.size", "5000");
+        // enable two-phase, i.e. local-global aggregation
+        configuration.setString("table.optimizer.agg-phase-strategy", "TWO_PHASE");
+        configuration.setString("table.optimizer.distinct-agg.split.enabled", "true");
         for (String sql : sqlList) {
             if (StringUtils.isNotBlank(sql)) {
                 Optional<SqlCommandParser.SqlCommandCall> sqlCommand = SqlCommandParser.parse(sql);
                 if (sqlCommand.isPresent()) {
-                    callCommand(sqlCommand.get(), tableEnv);
+                    callCommand(sqlCommand.get(), tEnv);
                 }
             }
         }
