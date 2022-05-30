@@ -1,5 +1,0 @@
-{"wegiht":"1","price":"6","action":"1","itemId":"1","rankIndex":14,"time":"1563641998","unionId":"123"}
-{"wegiht":"1","price":"6","action":"2","itemId":"1","rankIndex":10,"time":"1563641998","unionId":"12 34"}
-{"wegiht":"3","price":"8","action":"3","itemId":"2","rankIndex":21,"time":"1563641998","unionId":"56 78"}
-{"wegiht":"3","price":"8","action":"4","itemId":"2","rankIndex":22,"time":"1563641998","unionId":"ohmdTt_gZk2UkbbWsXBARMsTl1mI"}
-{"wegiht":"5","price":"10","action":"5","itemId":"3","rankIndex":10,"time":"1563641998","unionId":"ohmdTtzivXuT9u3oWFO5daAxziI0"}

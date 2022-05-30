@@ -1,0 +1,2 @@
+./bin/flink run -m yarn-cluster -ynm g05_flink_enterprise_standard_dml -ys 3 -c com.hycan.bigdata.job.SchemaJob \
+/opt/Bigdata/jar/flink-sql-parser-0.0.1-SNAPSHOT.jar --path /load/data/g05_flink_enterprise_standard_hive_dml.sql

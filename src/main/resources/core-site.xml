@@ -1,28 +1,125 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
-<!--
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing, software
-  distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  See the License for the specific language governing permissions and
-  limitations under the License. See accompanying LICENSE file.
--->
-
-<!-- Put site-specific property overrides in this file. -->
-
 <configuration>
-  <property><name>hadoop.proxyuser.hue.hosts</name><value>*</value></property>
-  <property><name>fs.defaultFS</name><value>hdfs://localhost:8020</value></property>
-  <property><name>hadoop.proxyuser.hue.groups</name><value>*</value></property>
-  <property><name>hadoop.http.staticuser.user</name><value>root</value></property>
-  <property><name>hadoop.proxyuser.hue.hosts</name><value>*</value></property>
-  <property><name>fs.defaultFS</name><value>hdfs://localhost:8020</value></property>
-  <property><name>hadoop.proxyuser.hue.groups</name><value>*</value></property>
-  <property><name>hadoop.http.staticuser.user</name><value>root</value></property>
+<property>
+<name>fs.defaultFS</name>
+<value>hdfs://hacluster</value>
+</property>
+<property>
+<name>hadoop.security.openssl.engin.id</name>
+<value>kae</value>
+</property>
+<property>
+<name>fs.obs.server-side-encryption-type</name>
+<value>NONE</value>
+</property>
+<property>
+<name>fs.obs.socket.send.buffer</name>
+<value>262144</value>
+</property>
+<property>
+<name>fs.obs.multipart.size</name>
+<value>104857600</value>
+</property>
+<property>
+<name>hadoop.security.auth_to_local</name>
+<value>RULE:[1:$1@$0](^.*@$)s/^(.*)@$/$1/g
+                        RULE:[2:$1@$0](^.*@$)s/^(.*)@$/$1/g
+                        DEFAULT</value>
+</property>
+<property>
+<name>hadoop.security.crypto.codec.classes.aes.ctr.nopadding</name>
+<value>org.apache.hadoop.crypto.OpensslAesCtrCryptoCodec,org.apache.hadoop.crypto.JceAesCtrCryptoCodec</value>
+</property>
+<property>
+<name>fs.obs.secret.key</name>
+<value></value>
+</property>
+<property>
+<name>fs.obs.auth.agency-mapping.localpath</name>
+<value>/opt/Bigdata/agency-mapping.properties</value>
+</property>
+<property>
+<name>fs.obs.security.provider</name>
+<value>com.huawei.mrs.MrsObsCredentialsProvider</value>
+</property>
+<property>
+<name>fs.viewfs.mounttable.ClusterX.homedir</name>
+<value>/</value>
+</property>
+<property>
+<name>fs.obs.list.threads.core</name>
+<value>40</value>
+</property>
+<property>
+<name>fs.viewfs.rename.strategy</name>
+<value>SAME_FILESYSTEM_ACROSS_MOUNTPOINT</value>
+</property>
+<property>
+<name>fs.obs.socket.recv.buffer</name>
+<value>262144</value>
+</property>
+<property>
+<name>fs.obs.write.buffer.size</name>
+<value>262144</value>
+</property>
+<property>
+<name>fs.obs.read.buffer.size</name>
+<value>262144</value>
+</property>
+<property>
+<name>fs.obs.metrics.switch</name>
+<value>true</value>
+</property>
+<property>
+<name>hadoop.security.authentication</name>
+<value>kerberos</value>
+</property>
+<property>
+<name>fs.obs.buffer.dir</name>
+<value>${java.io.tmpdir}/obs</value>
+</property>
+<property>
+<name>fs.AbstractFileSystem.obs.impl</name>
+<value>org.apache.hadoop.fs.obs.OBS</value>
+</property>
+<property>
+<name>fs.obs.readahead.range</name>
+<value>2097152</value>
+</property>
+<property>
+<name>fs.obs.impl</name>
+<value>org.apache.hadoop.fs.obs.OBSFileSystem</value>
+</property>
+<property>
+<name>hadoop.security.token.service.use_ip</name>
+<value>true</value>
+</property>
+<property>
+<name>fs.obs.list.threads.max</name>
+<value>80</value>
+</property>
+<property>
+<name>fs.obs.access.key</name>
+<value></value>
+</property>
+<property>
+<name>hadoop.rpc.protection</name>
+<value>privacy</value>
+</property>
+<property>
+<name>fs.obs.endpoint</name>
+<value>obs.cn-south-1.myhuaweicloud.com</value>
+</property>
+<property>
+<name>fs.obs.metrics.consumer</name>
+<value>org.apache.hadoop.fs.obs.metrics.OBSAMetricsProvider</value>
+</property>
+<property>
+<name>fs.obs.server-side-encryption-key</name>
+<value></value>
+</property>
+<property>
+<name>fs.obs.list.parallel.factor</name>
+<value>80</value>
+</property>
 </configuration>
