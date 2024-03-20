@@ -63,6 +63,7 @@ public class SchemaJob {
 //        LOGGER.info("sqls:" + SQLS);
 //        System.out.println("sqls:" + SQLS);
         Map<String, String> parameterMap = new HashMap<>();
+
         parameterMap.put(MessageConstants.ACTIVE, ACTIVE);
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.getConfig().setGlobalJobParameters(parameterTool);
