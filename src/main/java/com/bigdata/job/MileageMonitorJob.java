@@ -1,9 +1,9 @@
-package com.hycan.bigdata.job;
+package com.bigdata.job;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.hycan.bigdata.agg.MileageAggFun;
-import com.hycan.bigdata.agg.MileageWindowFun;
-import com.hycan.bigdata.utils.MyTimeAssignerUtils;
+import com.bigdata.utils.MyTimeAssignerUtils;
+import com.bigdata.agg.MileageAggFun;
+import com.bigdata.agg.MileageWindowFun;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;

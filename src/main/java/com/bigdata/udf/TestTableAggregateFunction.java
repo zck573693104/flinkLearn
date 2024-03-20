@@ -1,4 +1,4 @@
-package com.hycan.bigdata.udf;
+package com.bigdata.udf;
 
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeinfo.Types;

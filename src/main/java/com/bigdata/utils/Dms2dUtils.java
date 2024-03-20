@@ -1,4 +1,4 @@
-package com.hycan.bigdata.utils;
+package com.bigdata.utils;
 
 public class Dms2dUtils {
     /**

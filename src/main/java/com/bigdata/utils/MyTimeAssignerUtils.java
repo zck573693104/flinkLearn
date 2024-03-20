@@ -1,4 +1,4 @@
-package com.hycan.bigdata.utils;
+package com.bigdata.utils;
 
 
 import com.alibaba.fastjson2.JSONObject;

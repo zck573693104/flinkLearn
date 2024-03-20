@@ -1,7 +1,7 @@
-package com.hycan.bigdata.job;
+package com.bigdata.job;
 
-import com.hycan.bigdata.udf.MapToStringUDF;
-import com.hycan.bigdata.udf.ParserSpecialUDTF;
+import com.bigdata.udf.MapToStringUDF;
+import com.bigdata.udf.ParserSpecialUDTF;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 
 public class RegisterUdf {

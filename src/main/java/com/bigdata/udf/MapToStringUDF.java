@@ -1,4 +1,4 @@
-package com.hycan.bigdata.udf;
+package com.bigdata.udf;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.table.functions.ScalarFunction;

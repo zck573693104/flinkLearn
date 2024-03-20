@@ -1,4 +1,4 @@
-package com.hycan.bigdata.process;
+package com.bigdata.process;
 
 import com.alibaba.fastjson2.JSONObject;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;

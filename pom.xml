@@ -4,12 +4,12 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.hycan</groupId>
-    <artifactId>flink-sql-parser</artifactId>
+    <artifactId>flinkLearn</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>flink-sql-parser</name>
+    <name>flinkLearn</name>
 
     <properties>
-        <flink.version>1.14.4</flink.version>
+        <flink.version>1.18.1</flink.version>
         <hbase.version>2.2.3</hbase.version>
         <hive.version>3.1.0</hive.version>
         <log4j2.version>2.9.1</log4j2.version>
@@ -18,34 +18,29 @@
 
     <dependencies>
         <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-runtime-web_2.11</artifactId>
-            <version>${flink.version}</version>
-           <!--            <scope>provided</scope>-->
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>32.1.3-jre</version>
+            <!--            <scope>provided</scope>-->
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-planner_2.11</artifactId>
+            <artifactId>flink-runtime-web</artifactId>
             <version>${flink.version}</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-core</artifactId>
+            <artifactId>flink-table-planner_2.12</artifactId>
             <version>${flink.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.apache.flink</groupId>
-                    <artifactId>flink-shaded-hadoop-2</artifactId>
-                </exclusion>
-            </exclusions>
-            <!--            <scope>provided</scope>-->
         </dependency>
+
+
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-clients_2.11</artifactId>
+            <artifactId>flink-clients</artifactId>
             <version>${flink.version}</version>
             <exclusions>
                 <exclusion>
@@ -69,7 +64,7 @@
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-streaming-scala_2.11</artifactId>
+            <artifactId>flink-streaming-scala_2.12</artifactId>
             <version>${flink.version}</version>
             <exclusions>
                 <exclusion>
@@ -88,33 +83,14 @@
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-kafka_2.11</artifactId>
-            <version>${flink.version}</version>
+            <artifactId>flink-sql-connector-kafka</artifactId>
+            <version>3.0.1-1.18</version>
             <!--            <scope>provided</scope>-->
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-jdbc_2.11</artifactId>
-            <version>${flink.version}</version>
-            <!--            <scope>provided</scope>-->
-        </dependency>
-        <dependency>
-            <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase-common</artifactId>
-            <version>${hbase.version}</version>
-            <!--            <scope>provided</scope>-->
-        </dependency>
-        <dependency>
-            <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase-client</artifactId>
-            <version>${hbase.version}</version>
-            <!--            <scope>provided</scope>-->
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-hbase-2.2_2.11</artifactId>
-            <version>${flink.version}</version>
-            <!--            <scope>provided</scope>-->
+            <artifactId>flink-connector-jdbc</artifactId>
+            <version>3.1.2-1.18</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
@@ -124,28 +100,28 @@
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-api-scala-bridge_2.11</artifactId>
+            <artifactId>flink-table-api-scala-bridge_2.12</artifactId>
             <version>${flink.version}</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-api-java-bridge_2.11</artifactId>
+            <artifactId>flink-table-api-java-bridge</artifactId>
             <version>${flink.version}</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-orc_2.11</artifactId>
+            <artifactId>flink-orc</artifactId>
             <version>${flink.version}</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-cep-scala_2.11</artifactId>
+            <artifactId>flink-cep-scala_2.12</artifactId>
             <version>${flink.version}</version>
             <exclusions>
                 <exclusion>
@@ -158,24 +134,16 @@
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-hive_2.11</artifactId>
+            <artifactId>flink-connector-hive_2.12</artifactId>
             <version>${flink.version}</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-sql-connector-hive-3.1.2_2.11</artifactId>
-            <version>1.12.7</version>
-            <!--            <scope>provided</scope>-->
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-clickhouse</artifactId>
-            <version>1.14.4-SNAPSHOT</version>
-            <!--            <scope>provided</scope>-->
-        </dependency>
+        <!--        <dependency>-->
+        <!--            <groupId>com.starrocks</groupId>-->
+        <!--            <artifactId>flink-connector-starrocks</artifactId>-->
+        <!--            <version>1.2.2_flink-1.15</version>-->
+        <!--        </dependency>-->
 
         <dependency>
             <groupId>org.apache.flink</groupId>
@@ -185,10 +153,24 @@
         </dependency>
 
 
+        <!-- https://mvnrepository.com/artifact/org.apache.avro/avro -->
+        <!--        <dependency>-->
+        <!--            <groupId>org.apache.avro</groupId>-->
+        <!--            <artifactId>avro</artifactId>-->
+        <!--            <version>1.7.4</version>-->
+        <!--        </dependency>-->
+
+
         <dependency>
             <groupId>org.apache.hive</groupId>
             <artifactId>hive-exec</artifactId>
             <version>${hive.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>guava</artifactId>
+                </exclusion>
+            </exclusions>
             <!--            <scope>provided</scope>-->
         </dependency>
 
@@ -199,33 +181,30 @@
             <!--            <scope>provided</scope>-->
         </dependency>
 
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-sql-avro</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>mysql</groupId>
             <artifactId>mysql-connector-java</artifactId>
-            <version>8.0.22</version>
+            <version>8.0.28</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
-
-
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>18.0</version>
-            <!--            <scope>provided</scope>-->
-        </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.16.18</version>
+            <version>1.18.28</version>
             <!--            <scope>provided</scope>-->
         </dependency>
         <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>fastjson</artifactId>
-            <version>2.0.4</version>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.32</version>
             <!--            <scope>provided</scope>-->
         </dependency>
 
@@ -236,40 +215,60 @@
             <!--            <scope>provided</scope>-->
         </dependency>
 
+
         <dependency>
-            <groupId>ru.yandex.clickhouse</groupId>
-            <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.2.6</version>
-            <!--            <scope>provided</scope>-->
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+            <version>3.3.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>1.23.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>4.0.3</version>
+            <!--                       <scope>provided</scope>-->
+        </dependency>
+
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <version>5.1.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>2.9.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.huaweicloud</groupId>
+            <artifactId>esdk-obs-java-bundle</artifactId>
+            <version>[3.23,)</version>
         </dependency>
     </dependencies>
 
+
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.scala-tools</groupId>
-                <artifactId>maven-scala-plugin</artifactId>
-                <version>2.15.2</version>
-                <executions>
-                    <execution>
-                        <id>scala-compile-first</id>
-                        <goals>
-                            <goal>compile</goal>
-                        </goals>
-                        <configuration>
-                            <includes>
-                                <include>**/*.scala</include>
-                            </includes>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>scala-test-compile</id>
-                        <goals>
-                            <goal>testCompile</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -278,6 +277,25 @@
                     <target>1.8</target>
                 </configuration>
             </plugin>
+            <!--AVRO的插件-->
+            <!--            <plugin>-->
+            <!--                <groupId>org.apache.avro</groupId>-->
+            <!--                <artifactId>avro-maven-plugin</artifactId>-->
+            <!--                <version>1.10.2</version>-->
+            <!--                <executions>-->
+            <!--                    <execution>-->
+            <!--                        <phase>generate-sources</phase>-->
+            <!--                        <goals>-->
+            <!--                            <goal>schema</goal>-->
+            <!--                        </goals>-->
+            <!--                        <configuration>-->
+            <!--                            <sourceDirectory>${project.basedir}/src/main/avro/</sourceDirectory>-->
+            <!--                            <outputDirectory>${project.basedir}/src/main/java/</outputDirectory>-->
+            <!--                        </configuration>-->
+            <!--                    </execution>-->
+            <!--                </executions>-->
+            <!--            </plugin>-->
+
         </plugins>
     </build>
 

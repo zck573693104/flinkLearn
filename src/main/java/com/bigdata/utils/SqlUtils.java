@@ -1,6 +1,6 @@
-package com.hycan.bigdata.utils;
+package com.bigdata.utils;
 
-import com.hycan.bigdata.SqlCommandParser;
+import com.bigdata.SqlCommandParser;
 import org.apache.flink.table.api.SqlDialect;
 import org.apache.flink.table.api.StatementSet;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;

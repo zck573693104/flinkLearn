@@ -1,4 +1,4 @@
-package com.hycan.bigdata.utils;
+package com.bigdata.utils;
 
 import com.google.common.base.Splitter;
 import org.apache.commons.io.FileUtils;

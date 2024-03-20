@@ -1,9 +1,9 @@
-package com.hycan.bigdata.job;
+package com.bigdata.job;
 
 
-import com.hycan.bigdata.SqlCommandParser;
-import com.hycan.bigdata.utils.ReadFileUtils;
-import com.hycan.bigdata.utils.SqlUtils;
+import com.bigdata.utils.ReadFileUtils;
+import com.bigdata.SqlCommandParser;
+import com.bigdata.utils.SqlUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;

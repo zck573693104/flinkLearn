@@ -1,4 +1,4 @@
-package com.hycan.bigdata;
+package com.bigdata;
 
 import java.util.Arrays;
 import java.util.Objects;

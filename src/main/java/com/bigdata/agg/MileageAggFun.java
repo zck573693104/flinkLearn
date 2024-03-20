@@ -1,4 +1,4 @@
-package com.hycan.bigdata.agg;
+package com.bigdata.agg;
 
 import com.alibaba.fastjson2.JSONObject;
 import org.apache.flink.api.common.functions.AggregateFunction;
