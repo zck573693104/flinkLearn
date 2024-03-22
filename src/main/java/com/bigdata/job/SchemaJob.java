@@ -2,6 +2,7 @@ package com.bigdata.job;
 
 
 import com.bigdata.SqlCommandParser;
+import com.bigdata.constants.MessageConstants;
 import com.bigdata.utils.HiveUtils;
 import com.bigdata.utils.ReadFileUtils;
 import com.bigdata.utils.SqlUtils;
