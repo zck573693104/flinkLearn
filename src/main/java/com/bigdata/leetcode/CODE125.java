@@ -28,14 +28,14 @@ public class CODE125 {
         char[] nums = num.toCharArray();
         while (left < right) {
             while (left != right) {
-                if (Character.isDigit(nums[left]) || ('a' <= nums[left] && nums[left] <= 'z')) {
+                if (Character.isLetterOrDigit(nums[left])) {
                     break;
                 } else {
                     left++;
                 }
             }
             while (left != right) {
-                if (Character.isDigit(nums[right]) || ('a' <= nums[right] && nums[right] <= 'z')) {
+                if (Character.isLetterOrDigit(nums[right])) {
                     break;
                 } else {
                     right--;
