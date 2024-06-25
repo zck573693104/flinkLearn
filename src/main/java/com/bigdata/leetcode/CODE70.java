@@ -9,7 +9,7 @@ public class CODE70 {
     }
     public static int climbStairs(int nums) {
         if (nums <= 2) {return nums;}
-        int p = 1;
+        int p;
         int q = 2;
         int res = 3;
         for (int i = 3; i < nums; i++) {
