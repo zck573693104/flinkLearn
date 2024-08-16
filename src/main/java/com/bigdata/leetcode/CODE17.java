@@ -20,13 +20,16 @@ public class CODE17 {
     StringBuffer buffer = new StringBuffer();
     public List<String> letterCombinations(String digits) {
         //解决快速寻找数组中所有存在目标字母的方法: Map加回溯
-        if (digits.length() == 0)  return res;
+        if (digits.length() == 0) {
+            return res;
+        }
         backtrack( digits, 0);
         return res;
     }
     public void backtrack(String digits, int index) {
-        if (index == digits.length()) res.add(buffer.toString());
-        else {
+        if (index == digits.length()) {
+            res.add(buffer.toString());
+        } else {
             char digit = digits.charAt(index);
             String letters = phoneMap.get(digit);
             for (int i = 0; i < letters.length(); i++) {
