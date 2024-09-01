@@ -41,7 +41,7 @@ public class SQLGenerator {
     }
 
     private static String extractCreateTableStatement(String filePath, String tableName) throws IOException {
-        String pattern = "CREATE\\s+TABLE\\s+" + Pattern.quote(tableName) + "\\s*\\((.*?)\\);";
+        String pattern = "CREATE\\s+TABLE\\s+" + Pattern.quote(tableName) + "\\s*\\(([\\s\\S]*?)\\)*;";
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
             String content = reader.lines().collect(Collectors.joining());
             Matcher matcher = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(content);
