@@ -7,6 +7,7 @@ import com.bigdata.agg.MileageWindowFun;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.kafka.source.KafkaSource;
@@ -55,7 +56,7 @@ public class MileageMonitorJob {
         windowedStream.trigger(PurgingTrigger.of(DeltaTrigger.of(THRESHOLD
                         , (oldDataPoint, newDataPoint) -> newDataPoint.getDoubleValue(PATH) - oldDataPoint.getDoubleValue(PATH)
                         , TypeInformation.of(JSONObject.class).createSerializer(env.getConfig()))))
-                .aggregate(new MileageAggFun(), new MileageWindowFun()).print();
+                .aggregate(new MileageAggFun(), new MileageWindowFun()).returns(Types.TUPLE(Types.STRING,Types.LONG)).print();
 
         env.execute("MileageMonitorJob");
     }
