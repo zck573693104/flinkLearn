@@ -52,7 +52,7 @@ public class SchemaJob {
 
         ParameterTool parameterTool = ParameterTool.fromArgs(args);
         LOGGER.info("args:" + parameterTool.toMap());
-        CHK_TIME = parameterTool.getLong("chk_time", 30 * 60 * 1000L);
+        CHK_TIME = parameterTool.getLong("chk_time", 1 * 1000L);
         PARALLELISM = parameterTool.getInt("parallelism", 1);
         HIVE_PARALLELISM = parameterTool.getInt("hive_parallelism", 1);
         PATH = parameterTool.get("path", "/load/data/hbase-1.sql");
