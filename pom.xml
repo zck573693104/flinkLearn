@@ -284,6 +284,21 @@
     <version>5.0</version>
 </dependency>
 
+        <dependency>
+            <groupId>io.github.melin.superior</groupId>
+            <artifactId>superior-spark-parser</artifactId>
+            <version>4.0.16</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.melin.superior</groupId>
+            <artifactId>superior-presto-parser</artifactId>
+            <version>4.0.16</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.melin.superior</groupId>
+            <artifactId>superior-mysql-parser</artifactId>
+            <version>4.0.16</version>
+        </dependency>
     </dependencies>
 
 
