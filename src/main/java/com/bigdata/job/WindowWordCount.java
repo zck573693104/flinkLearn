@@ -3,9 +3,11 @@ package com.bigdata.job;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.triggers.CountTrigger;
 import org.apache.flink.util.Collector;
 
 public class WindowWordCount {
@@ -14,11 +16,14 @@ public class WindowWordCount {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        DataStream<Tuple2<String, Integer>> dataStream = env
+        SingleOutputStreamOperator dataStream = env
                 .socketTextStream("localhost", 9999)
                 .flatMap(new Splitter())
                 .keyBy(value -> value.f0)
                 .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+                .trigger(CountTrigger.of(5))
+                .allowedLateness(Time.seconds(5))
+                .evictor()
                 .sum(1);
 
         dataStream.print();
