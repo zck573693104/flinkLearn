@@ -23,7 +23,6 @@ public class WindowWordCount {
                 .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
                 .trigger(CountTrigger.of(5))
                 .allowedLateness(Time.seconds(5))
-                .evictor()
                 .sum(1);
 
         dataStream.print();
