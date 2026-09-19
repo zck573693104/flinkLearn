@@ -1,5 +1,7 @@
 package com.bigdata.lineage.parser;
 
+import com.bigdata.lineage.model.ColumnLineageResult;
+import com.bigdata.lineage.model.TableLineageResult;
 import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -243,3 +245,145 @@ public class PrestoSQLLineageExtractor {
         
         return results;
     }
+    
+    /**
+     * 从 INSERT 语句提取列级血缘（基于正则表达式）
+     */
+    private List<ColumnLineageResult> extractColumnLineagesFromInsert(String sql, Set<String> sourceTables) {
+        List<ColumnLineageResult> results = new ArrayList<>();
+        
+        try {
+            Pattern targetPattern = Pattern.compile(
+                "INSERT\\s+INTO\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?([\\w.]+)",
+                Pattern.CASE_INSENSITIVE);
+            Matcher targetMatcher = targetPattern.matcher(sql);
+            
+            if (!targetMatcher.find()) {
+                log.warn("Cannot extract target table from INSERT statement");
+                return results;
+            }
+            
+            String targetTable = targetMatcher.group(1).replaceAll("[^\\w]", "");
+            
+            Pattern selectPattern = Pattern.compile(
+                "SELECT\\s+(.*?)\\s+FROM",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            Matcher selectMatcher = selectPattern.matcher(sql);
+            
+            if (!selectMatcher.find()) {
+                log.warn("Cannot extract SELECT clause from INSERT statement");
+                return results;
+            }
+            
+            String selectClause = selectMatcher.group(1).trim();
+            String[] columns = selectClause.split(",");
+            String firstSourceTable = sourceTables.iterator().next();
+            
+            for (int i = 0; i < columns.length; i++) {
+                String col = columns[i].trim();
+                
+                String sourceColumn;
+                String targetColumn;
+                String transformation = null;
+                
+                Pattern aliasPattern = Pattern.compile("(.+?)\\s+AS\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
+                Matcher aliasMatcher = aliasPattern.matcher(col);
+                
+                if (aliasMatcher.find()) {
+                    sourceColumn = aliasMatcher.group(1).trim();
+                    targetColumn = aliasMatcher.group(2).trim();
+                    transformation = "alias:" + targetColumn;
+                } else {
+                    sourceColumn = col;
+                    targetColumn = col;
+                    
+                    if (col.contains("(") && col.contains(")")) {
+                        transformation = "function";
+                    }
+                }
+                
+                ColumnLineageResult result = ColumnLineageResult.builder()
+                    .sourceTable(firstSourceTable)
+                    .sourceColumn(sourceColumn)
+                    .targetTable(targetTable)
+                    .targetColumn(targetColumn)
+                    .transformation(transformation)
+                    .confidence(0.85)
+                    .build();
+                
+                results.add(result);
+            }
+            
+        } catch (Exception e) {
+            log.error("Failed to extract column lineage from INSERT", e);
+        }
+        
+        return results;
+    }
+    
+    /**
+     * 从 SELECT 语句提取列级血缘
+     */
+    private List<ColumnLineageResult> extractColumnLineagesFromSelect(String sql, Set<String> sourceTables) {
+        List<ColumnLineageResult> results = new ArrayList<>();
+        
+        try {
+            Pattern starPattern = Pattern.compile("SELECT\\s+\\*\\s+FROM", Pattern.CASE_INSENSITIVE);
+            Matcher matcher = starPattern.matcher(sql);
+            
+            if (matcher.find() && !sourceTables.isEmpty()) {
+                String firstTable = sourceTables.iterator().next();
+                ColumnLineageResult result = ColumnLineageResult.builder()
+                    .sourceTable(firstTable)
+                    .sourceColumn("*")
+                    .targetTable(null)
+                    .targetColumn("*")
+                    .transformation("select_star")
+                    .confidence(0.8)
+                    .build();
+                results.add(result);
+            }
+            
+        } catch (Exception e) {
+            log.error("Failed to extract column lineage from SELECT", e);
+        }
+        
+        return results;
+    }
+    
+    /**
+     * 解析 INSERT 或 SELECT 语句，构建血缘结果
+     */
+    private TableLineageResult parseInsertOrSelect(String sql, Set<String> tables) {
+        String upperSql = sql.toUpperCase().trim();
+        
+        if (upperSql.startsWith("INSERT INTO")) {
+            Pattern pattern = Pattern.compile(
+                "INSERT\\s+INTO\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?([\\w.]+)",
+                Pattern.CASE_INSENSITIVE);
+            Matcher matcher = pattern.matcher(sql);
+            
+            if (matcher.find()) {
+                String targetTable = matcher.group(1).replaceAll("[^\\w]", "");
+                
+                Set<String> sourceTables = new HashSet<>(tables);
+                sourceTables.remove(targetTable);
+                
+                return TableLineageResult.builder()
+                    .targetTable(targetTable)
+                    .sourceTables(sourceTables)
+                    .processType("INSERT")
+                    .confidence(0.85)
+                    .build();
+            }
+        } else if (upperSql.startsWith("SELECT")) {
+            return TableLineageResult.builder()
+                .sourceTables(tables)
+                .processType("SELECT")
+                .confidence(0.85)
+                .build();
+        }
+        
+        return null;
+    }
+}

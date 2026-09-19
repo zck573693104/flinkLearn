@@ -1,5 +1,7 @@
 package com.bigdata.lineage;
 
+import com.bigdata.lineage.model.ColumnLineageResult;
+import com.bigdata.lineage.model.TableLineageResult;
 import com.bigdata.lineage.parser.*;
 
 import java.util.List;
@@ -194,7 +196,7 @@ public class LineageSystemTest {
         printResult("Multi-table JOIN", sql2, result2);
         
         // Test 3: Column lineage
-        List<SparkSQLLineageExtractor.ColumnLineageResult> colResults = 
+        List<ColumnLineageResult> colResults = 
             extractor.extractColumnLineages(sql1);
         System.out.println("Column lineage count: " + colResults.size());
         
@@ -219,7 +221,7 @@ public class LineageSystemTest {
         printResult("LEFT JOIN INSERT", sql2, result2);
         
         // Test 3: Column lineage
-        List<PrestoSQLLineageExtractor.ColumnLineageResult> colResults = 
+        List<ColumnLineageResult> colResults = 
             extractor.extractColumnLineages(sql2);
         System.out.println("Column lineage count: " + colResults.size());
         
@@ -420,9 +422,8 @@ public class LineageSystemTest {
             System.out.println("  Target: " + result.getTargetTable());
             System.out.println("  Sources: " + result.getSourceTables());
             System.out.println("  Confidence: " + result.getConfidence());
-        } else if (!results.isEmpty() && results.get(0) instanceof SparkSQLLineageExtractor.TableLineageResult) {
-            SparkSQLLineageExtractor.TableLineageResult result = 
-                (SparkSQLLineageExtractor.TableLineageResult) results.get(0);
+        } else if (!results.isEmpty()) {
+            TableLineageResult result = (TableLineageResult) results.get(0);
             System.out.println("  Target: " + result.getTargetTable());
             System.out.println("  Sources: " + result.getSourceTables());
             System.out.println("  Confidence: " + result.getConfidence());

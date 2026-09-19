@@ -219,7 +219,7 @@
              To enable Presto native parsing (Route B), add one of the following:
              
              Option 1: Use official PrestoSQL parser (recommended for production)
-             --------------------------------------------------------------------
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
              <dependency>
                  <groupId>io.prestosql</groupId>
                  <artifactId>presto-parser</artifactId>
@@ -232,18 +232,18 @@
              https://repo.maven.apache.org/maven2/io/prestosql/presto-parser/
              
              Option 2: Use Superior Presto parser (already added below)
-             -----------------------------------------------------------
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
              Already included via superior-presto-parser:4.0.16
              
              How to enable:
-             --------------
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
              1. Uncomment the dependency above
              2. Run: mvn clean install
              3. PrestoSQLLineageExtractor will automatically detect and use it
              4. Check logs for "Presto parser available" message
              
              Graceful Degradation:
-             --------------------
+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
              If dependency is missing, PrestoSQLLineageExtractor will:
              - Log a warning about missing parser
              - Automatically fall back to TEXT_PARSING mode
