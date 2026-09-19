@@ -9,10 +9,14 @@
     <name>flinkLearn</name>
 
     <properties>
-        <flink.version>1.20.0</flink.version>
+        <flink.version>1.20.3</flink.version>
         <hbase.version>2.2.3</hbase.version>
         <hive.version>3.1.0</hive.version>
         <log4j2.version>1.7.36</log4j2.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
 
 
@@ -84,13 +88,13 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-sql-connector-kafka</artifactId>
-            <version>3.0.1-1.18</version>
+            <version>3.4.0-1.20</version>
             <!--            <scope>provided</scope>-->
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-jdbc</artifactId>
-            <version>3.1.2-1.18</version>
+            <version>3.4.0-1.20</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
@@ -152,6 +156,7 @@
             <!--            <scope>provided</scope>-->
         </dependency>
 
+        <!-- JSQLParser for SQL parsing and lineage extraction -->
         <dependency>
             <groupId>com.github.jsqlparser</groupId>
             <artifactId>jsqlparser</artifactId>
@@ -189,6 +194,68 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-sql-avro</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- Flink SQL Parser for lineage extraction (Route A) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-sql-parser</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/org.apache.avro/avro -->
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-sql_2.12</artifactId>
+            <version>3.5.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- =====================================================
+             Presto SQL Parser Dependency (Optional for Native API Mode)
+             =====================================================
+             
+             To enable Presto native parsing (Route B), add one of the following:
+             
+             Option 1: Use official PrestoSQL parser (recommended for production)
+             --------------------------------------------------------------------
+             <dependency>
+                 <groupId>io.prestosql</groupId>
+                 <artifactId>presto-parser</artifactId>
+                 <version>372</version>
+                 <scope>provided</scope>
+             </dependency>
+             
+             Note: Version 372 is compatible with PrestoDB 0.260+
+             Check available versions at: 
+             https://repo.maven.apache.org/maven2/io/prestosql/presto-parser/
+             
+             Option 2: Use Superior Presto parser (already added below)
+             -----------------------------------------------------------
+             Already included via superior-presto-parser:4.0.16
+             
+             How to enable:
+             --------------
+             1. Uncomment the dependency above
+             2. Run: mvn clean install
+             3. PrestoSQLLineageExtractor will automatically detect and use it
+             4. Check logs for "Presto parser available" message
+             
+             Graceful Degradation:
+             --------------------
+             If dependency is missing, PrestoSQLLineageExtractor will:
+             - Log a warning about missing parser
+             - Automatically fall back to TEXT_PARSING mode
+             - Continue working with JSQLParser-based text parsing
+             
+             Reference: See PrestoParserManager.java for implementation details
+             ===================================================== -->
+
+        <!-- Flink Table Validator for column-level lineage (Route B) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-common</artifactId>
             <version>${flink.version}</version>
         </dependency>
 
@@ -269,20 +336,17 @@
             <artifactId>log4j-core</artifactId>
             <version>2.9.1</version>
         </dependency>
-
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-expression</artifactId>
+            <version>5.3.26</version>
+        </dependency>
         <dependency>
             <groupId>com.huaweicloud</groupId>
             <artifactId>esdk-obs-java-bundle</artifactId>
             <version>[3.23,)</version>
         </dependency>
 
-
-        <!-- https://mvnrepository.com/artifact/com.github.jsqlparser/jsqlparser -->
-<dependency>
-    <groupId>com.github.jsqlparser</groupId>
-    <artifactId>jsqlparser</artifactId>
-    <version>5.0</version>
-</dependency>
 
         <dependency>
             <groupId>io.github.melin.superior</groupId>
@@ -307,9 +371,19 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
                 <configuration>
-                    <source>11</source>
-                    <target>11</target>
+                    <source>17</source>
+                    <target>17</target>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <encoding>UTF-8</encoding>
                 </configuration>
             </plugin>
             <!--AVRO的插件-->
