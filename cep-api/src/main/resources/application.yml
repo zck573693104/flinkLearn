@@ -5,6 +5,29 @@ spring:
   application:
     name: cep-dynamic-loading-system
   
+  # H2 Database Configuration (Development)
+  datasource:
+    url: jdbc:h2:mem:cepdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+  
+  # H2 Console (Optional, for debugging)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  
+  # JPA Configuration
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  
   jackson:
     default-property-inclusion: non_null
     serialization:
