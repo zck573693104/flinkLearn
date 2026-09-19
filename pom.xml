@@ -382,7 +382,6 @@
                 <configuration>
                     <visitor>true</visitor>
                     <listener>false</listener>
-                    <outputDirectory>src/main/java</outputDirectory>
                     <grammars>
                         <!-- Flink SQL Grammar -->
                         <grammar>io/github/melin/superior/parser/flink/antlr4/FlinkSqlLexer.g4</grammar>
@@ -414,6 +413,9 @@
                     <source>17</source>
                     <target>17</target>
                     <encoding>UTF-8</encoding>
+                    <compilerArgs>
+                        <arg>-J-Dfile.encoding=UTF-8</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>

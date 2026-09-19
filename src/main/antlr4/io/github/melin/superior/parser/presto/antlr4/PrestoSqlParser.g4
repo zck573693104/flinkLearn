@@ -1,8 +1,6 @@
 parser grammar PrestoSqlParser;
 
-options {
-    superClass = BasePrestoSqlParser;
-}
+// options { }
 
 // ============================================
 // 入口规则
@@ -18,6 +16,10 @@ statement
     | createTableStatement SEMICOLON?
     | cteStatement SEMICOLON?
     | explainStatement SEMICOLON?
+    | dropTableStatement SEMICOLON?
+    | alterTableStatement SEMICOLON?
+    | updateStatement SEMICOLON?
+    | deleteStatement SEMICOLON?
     ;
 
 // ============================================
@@ -51,11 +53,15 @@ cteDefinition
 
 // ============================================
 // 查询表达式 - 血缘提取核心
+// 支持集合操作：UNION/INTERSECT/EXCEPT
 // ============================================
 
 queryExpression
     : selectClause fromClause? whereClause? groupByClause? havingClause? 
       orderByClause? limitClause? windowClause?
+      (KW_UNION (DISTINCT | ALL)? queryExpression
+       | KW_INTERSECT (DISTINCT | ALL)? queryExpression
+       | KW_EXCEPT (DISTINCT | ALL)? queryExpression)*
     ;
 
 selectClause
@@ -155,10 +161,11 @@ frameBound
 
 // ============================================
 // 表路径和列名列表
+// 支持三级命名空间：catalog.schema.table
 // ============================================
 
 tablePath
-    : uid (DOT uid)*
+    : uid (DOT uid)? (DOT uid)?
     ;
 
 columnNameList
@@ -173,9 +180,6 @@ expression
     : primaryExpression
     | functionCall
     | castExpression
-    | binaryExpression
-    | betweenExpression
-    | inExpression
     | caseExpression
     ;
 
@@ -192,7 +196,7 @@ columnRef
 
 functionCall
     : functionName LPAREN (DISTINCT? expression (COMMA expression)*)? RPAREN
-    | functionName LPAREN DISTINCT? * RPAREN
+    | functionName LPAREN DISTINCT? expression (COMMA expression)* RPAREN
     ;
 
 castExpression
@@ -305,14 +309,14 @@ windowName
     ;
 
 // ============================================
-// CREATE TABLE 语句（含 CTAS）
+// CREATE TABLE/VIEW 语句（含临时表、CTAS 支持）
 // ============================================
 
 createTableStatement
-    : KW_CREATE TABLE (IF NOT EXISTS)? tablePath 
+    : KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath 
       LPAREN columnDefinition (COMMA columnDefinition)* RPAREN tableProperties?
-    | KW_CREATE TABLE (IF NOT EXISTS)? tablePath AS queryExpression
-    | KW_CREATE VIEW tablePath AS queryExpression
+    | KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath AS queryExpression
+    | KW_CREATE (TEMPORARY | TEMP)? VIEW (IF NOT EXISTS)? tablePath AS queryExpression
     ;
 
 columnDefinition
@@ -343,13 +347,59 @@ explainStatement
     : KW_EXPLAIN (ANALYZE | COST | DISTRIBUTION)? statementType
     ;
 
-statementType
-    : QUERY
-    | DELETE
-    | UPDATE
-    | INSERT
+// ============================================
+// DROP TABLE 语句
+// ============================================
+
+dropTableStatement
+    : KW_DROP TABLE (IF EXISTS)? tablePath
     ;
 
-QUERY: 'QUERY';
-DELETE: 'DELETE';
-UPDATE: 'UPDATE';
+// ============================================
+// ALTER TABLE 语句
+// ============================================
+
+alterTableStatement
+    : KW_ALTER TABLE tablePath alterTableClause
+    ;
+
+alterTableClause
+    : RENAME TO tablePath
+    | ADD COLUMN columnDefinition
+    | DROP COLUMN uid
+    | SET tableProperties
+    ;
+
+// ============================================
+// UPDATE 语句（Presto）
+// ============================================
+
+updateStatement
+    : KW_UPDATE tablePath (KW_AS alias)?
+      SET assignmentList
+      (KW_WHERE condition)?
+    ;
+
+assignmentList
+    : assignment (COMMA assignment)*
+    ;
+
+assignment
+    : uid EQ expression
+    ;
+
+// ============================================
+// DELETE 语句（Presto）
+// ============================================
+
+deleteStatement
+    : KW_DELETE FROM tablePath (KW_AS alias)?
+      (KW_WHERE condition)?
+    ;
+
+statementType
+    : KW_QUERY
+    | KW_DELETE
+    | KW_UPDATE
+    | KW_INSERT
+    ;

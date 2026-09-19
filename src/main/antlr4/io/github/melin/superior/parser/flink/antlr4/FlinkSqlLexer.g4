@@ -58,6 +58,11 @@ KW_ROWS: 'ROWS';
 KW_RANGE: 'RANGE';
 KW_BETWEEN: 'BETWEEN';
 KW_IN: 'IN';
+KW_UNION: 'UNION';
+KW_INTERSECT: 'INTERSECT';
+KW_EXCEPT: 'EXCEPT' | 'MINUS';
+KW_DROP: 'DROP';
+KW_ALTER: 'ALTER';
 
 // ============================================
 // 数据类型关键字
@@ -78,7 +83,7 @@ KW_BINARY: 'BINARY';
 KW_VARBINARY: 'VARBINARY';
 KW_ARRAY: 'ARRAY';
 KW_MAP: 'MAP';
-KW_ROW: 'ROW';
+// KW_ROW: 已在第 56 行定义
 KW_ANY: 'ANY';
 
 // ============================================
@@ -107,14 +112,13 @@ KW_LOCALTIMESTAMP: 'LOCALTIMESTAMP';
 // ============================================
 
 UID: [a-zA-Z_][a-zA-Z0-9_]*;
-QUOTED_UID: '`' (~`)+ '`';
+QUOTED_UID: '`' (~[`])+ '`';
 
 // ============================================
 // 字符串和数字
 // ============================================
 
-STRING: '\'' (~'\')* '\'';
-DOUBLE_QUOTED_STRING: '"' (~")* '"';
+STRING: '\'' (~'\'')+ '\'';
 
 NUMBER: [0-9]+;
 DECIMAL_NUMBER: [0-9]+'.'[0-9]+;

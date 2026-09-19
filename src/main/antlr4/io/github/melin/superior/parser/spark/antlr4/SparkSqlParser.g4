@@ -1,8 +1,6 @@
 parser grammar SparkSqlParser;
 
-options {
-    superClass = BaseSparkSqlParser;
-}
+// options { }
 
 // ============================================
 // 入口规则
@@ -21,6 +19,10 @@ statement
     | cacheStatement SEMICOLON?
     | showStatement SEMICOLON?
     | setStatement SEMICOLON?
+    | dropTableStatement SEMICOLON?
+    | alterTableStatement SEMICOLON?
+    | updateStatement SEMICOLON?
+    | deleteStatement SEMICOLON?
     ;
 
 // ============================================
@@ -54,11 +56,15 @@ cteDefinition
 
 // ============================================
 // 查询表达式 - 血缘提取核心
+// 支持集合操作：UNION/INTERSECT/EXCEPT
 // ============================================
 
 queryExpression
     : selectClause fromClause? whereClause? groupByClause? havingClause? 
       orderByClause? limitClause? windowClause? pivotClause?
+      (KW_UNION (DISTINCT | ALL)? queryExpression
+       | KW_INTERSECT (DISTINCT | ALL)? queryExpression
+       | KW_EXCEPT (DISTINCT | ALL)? queryExpression)*
     ;
 
 selectClause
@@ -166,16 +172,17 @@ frameBound
     ;
 
 pivotClause
-    : KW_PIVOT LPAREN aggregation functionName IN columnList (alias)? RPAREN
-    | KW_UNPIVOT LPAREN valueColumnName IN columnList RPAREN
+    : KW_PIVOT LPAREN functionName IN columnList (alias)? RPAREN
+    | KW_UNPIVOT LPAREN uid IN columnList RPAREN
     ;
 
 // ============================================
 // 表路径和列名列表
+// 支持三级命名空间：catalog.schema.table
 // ============================================
 
 tablePath
-    : uid (DOT uid)*
+    : uid (DOT uid)? (DOT uid)?
     ;
 
 columnNameList
@@ -190,9 +197,6 @@ expression
     : primaryExpression
     | functionCall
     | castExpression
-    | binaryExpression
-    | betweenExpression
-    | inExpression
     | arrayAccessExpression
     ;
 
@@ -209,7 +213,7 @@ columnRef
 
 functionCall
     : functionName LPAREN (DISTINCT? expression (COMMA expression)*)? RPAREN
-    | functionName LPAREN DISTINCT? * RPAREN
+    | functionName LPAREN DISTINCT? expression (COMMA expression)* RPAREN
     ;
 
 castExpression
@@ -297,13 +301,13 @@ windowName
     ;
 
 // ============================================
-// CREATE TABLE 语句（含 CTAS）
+// CREATE TABLE/VIEW 语句（含临时表、CTAS 支持）
 // ============================================
 
 createTableStatement
-    : KW_CREATE TABLE (IF NOT EXISTS)? tablePath 
+    : KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath 
       LPAREN columnDefinition (COMMA columnDefinition)* RPAREN tableProperties?
-    | KW_CREATE TABLE (IF NOT EXISTS)? tablePath AS queryExpression
+    | KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath AS queryExpression
     | KW_CREATE TEMPORARY VIEW tablePath AS queryExpression
     ;
 
@@ -352,7 +356,7 @@ cacheStatement
 
 showStatement
     : KW_SHOW TABLES
-    | KW_SHOW TABLE extended? tableNamePattern?
+    | KW_SHOW TABLE tableNamePattern?
     | KW_SHOW PARTITIONS tablePath
     | KW_SHOW COLUMNS IN tablePath
     | KW_SHOW FUNCTIONS pattern?
@@ -365,9 +369,7 @@ tableNamePattern
     : LIKE_STRING pattern?
     ;
 
-LIKE_STRING
-    : 'LIKE' | 'SIMILAR';
-
+// pattern 已在上文定义
 pattern
     : STRING
     ;
@@ -379,6 +381,56 @@ pattern
 setStatement
     : KW_SET propertyExpression
     | KW_UNSET propertyExpression
+    ;
+
+// ============================================
+// DROP TABLE 语句
+// ============================================
+
+dropTableStatement
+    : KW_DROP TABLE (IF EXISTS)? tablePath
+    ;
+
+// ============================================
+// ALTER TABLE 语句
+// ============================================
+
+alterTableStatement
+    : KW_ALTER TABLE tablePath alterTableClause
+    ;
+
+alterTableClause
+    : RENAME TO tablePath
+    | ADD COLUMN columnDefinition
+    | DROP COLUMN uid
+    | SET tableProperties
+    ;
+
+// ============================================
+// UPDATE 语句（Spark 3.x+）
+// ============================================
+
+updateStatement
+    : KW_UPDATE tablePath (KW_AS alias)?
+      SET assignmentList
+      (KW_WHERE expression)?
+    ;
+
+assignmentList
+    : assignment (COMMA assignment)*
+    ;
+
+assignment
+    : uid EQ expression
+    ;
+
+// ============================================
+// DELETE 语句（Spark 3.x+）
+// ============================================
+
+deleteStatement
+    : KW_DELETE FROM tablePath (KW_AS alias)?
+      (KW_WHERE expression)?
     ;
 
 propertyExpression
