@@ -289,6 +289,12 @@
 
 
         <dependency>
+            <groupId>org.antlr</groupId>
+            <artifactId>antlr4-runtime</artifactId>
+            <version>4.9.3</version>
+        </dependency>
+
+        <dependency>
             <groupId>com.alibaba</groupId>
             <artifactId>easyexcel</artifactId>
             <version>3.3.2</version>
@@ -368,6 +374,38 @@
 
     <build>
         <plugins>
+            <!-- ANTLR4 Plugin -->
+            <plugin>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-maven-plugin</artifactId>
+                <version>4.9.3</version>
+                <configuration>
+                    <visitor>true</visitor>
+                    <listener>false</listener>
+                    <outputDirectory>src/main/java</outputDirectory>
+                    <grammars>
+                        <!-- Flink SQL Grammar -->
+                        <grammar>io/github/melin/superior/parser/flink/antlr4/FlinkSqlLexer.g4</grammar>
+                        <grammar>io/github/melin/superior/parser/flink/antlr4/FlinkSqlParser.g4</grammar>
+                        <!-- Spark SQL Grammar -->
+                        <grammar>io/github/melin/superior/parser/spark/antlr4/SparkSqlLexer.g4</grammar>
+                        <grammar>io/github/melin/superior/parser/spark/antlr4/SparkSqlParser.g4</grammar>
+                        <!-- Presto SQL Grammar -->
+                        <grammar>io/github/melin/superior/parser/presto/antlr4/PrestoSqlLexer.g4</grammar>
+                        <grammar>io/github/melin/superior/parser/presto/antlr4/PrestoSqlParser.g4</grammar>
+                    </grammars>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>antlr4</id>
+                        <goals>
+                            <goal>antlr4</goal>
+                        </goals>
+                        <phase>generate-sources</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
