@@ -1,0 +1,29 @@
+{
+  "name": "cep-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Flink CEP 动态加载管理页面",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix"
+  },
+  "dependencies": {
+    "vue": "^3.3.4",
+    "vue-router": "^4.2.4",
+    "pinia": "^2.1.6",
+    "axios": "^1.5.0",
+    "element-plus": "^2.4.3",
+    "echarts": "^5.4.3",
+    "@element-plus/icons-vue": "^2.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.3.4",
+    "vite": "^4.4.9",
+    "typescript": "^5.2.2",
+    "vue-tsc": "^1.8.14",
+    "eslint": "^8.49.0",
+    "eslint-plugin-vue": "^9.16.0"
+  }
+}

@@ -7,6 +7,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * CEP 规则加载器
@@ -16,11 +17,13 @@ public class CepRuleLoader {
     
     private final StreamExecutionEnvironment env;
     private final Map<String, PatternStream> patternStreams;
+    private final Map<String, Pattern<CepEvent, ?>> compiledPatterns;
     private final PatternCompiler patternCompiler;
     
     public CepRuleLoader(StreamExecutionEnvironment env) {
         this.env = env;
-        this.patternStreams = new java.util.concurrent.ConcurrentHashMap<>();
+        this.patternStreams = new ConcurrentHashMap<>();
+        this.compiledPatterns = new ConcurrentHashMap<>();
         this.patternCompiler = new PatternCompiler();
     }
     
@@ -36,12 +39,15 @@ public class CepRuleLoader {
     public PatternStream loadRule(String ruleId, String ruleName, String patternJson, DataStream<CepEvent> inputStream) throws Exception {
         // 编译 Pattern
         Pattern<CepEvent, ?> pattern = patternCompiler.compile(patternJson);
+        compiledPatterns.put(ruleId, pattern);
         
         // 创建 PatternStream
         PatternStream patternStream = CEP.pattern(inputStream, pattern);
         
         // 注册到映射中
         patternStreams.put(ruleId, patternStream);
+        
+        System.out.println("Successfully loaded CEP rule: " + ruleName + " (ID: " + ruleId + ")");
         
         return patternStream;
     }
@@ -53,15 +59,19 @@ public class CepRuleLoader {
         // 停止旧规则
         stopRule(ruleId);
         
-        // 重新加载新规则
-        // TODO: 实现重新加载逻辑
+        // TODO: 重新加载新规则需要更复杂的流处理逻辑
+        // 这里仅从映射中移除，实际项目中需要重建整个流处理拓扑
+        System.out.println("Rule updated: " + ruleId);
     }
     
     /**
      * 删除规则
      */
     public void removeRule(String ruleId) {
+        stopRule(ruleId);
         patternStreams.remove(ruleId);
+        compiledPatterns.remove(ruleId);
+        System.out.println("Rule removed: " + ruleId);
     }
     
     /**
@@ -70,7 +80,9 @@ public class CepRuleLoader {
     private void stopRule(String ruleId) {
         PatternStream stream = patternStreams.get(ruleId);
         if (stream != null) {
-            // TODO: 停止流处理
+            // TODO: 在实际应用中，需要正确关闭流处理
+            // 这里仅为占位符实现
+            patternStreams.remove(ruleId);
         }
     }
     
@@ -78,6 +90,32 @@ public class CepRuleLoader {
      * 获取所有活跃的规则
      */
     public Map<String, PatternStream> getAllRules() {
-        return patternStreams;
+        return new ConcurrentHashMap<>(patternStreams);
+    }
+    
+    /**
+     * 检查规则是否存在
+     */
+    public boolean hasRule(String ruleId) {
+        return patternStreams.containsKey(ruleId);
+    }
+    
+    /**
+     * 获取规则数量
+     */
+    public int getRuleCount() {
+        return patternStreams.size();
+    }
+    
+    /**
+     * 清空所有规则
+     */
+    public void clearAllRules() {
+        for (String ruleId : patternStreams.keySet()) {
+            stopRule(ruleId);
+        }
+        patternStreams.clear();
+        compiledPatterns.clear();
+        System.out.println("All rules cleared");
     }
 }
