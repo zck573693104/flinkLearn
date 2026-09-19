@@ -1,0 +1,62 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: cep-dynamic-loading-system
+  
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+  
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+# Swagger/OpenAPI 配置
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
+# Actuator 端点配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.bigdata.cep: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# CEP 配置
+cep:
+  rule:
+    # 规则存储路径（可选，用于持久化）
+    storage-path: ./data/rules
+    # 自动重载间隔（秒）
+    auto-refresh-interval: 30
+  metrics:
+    # 指标采集间隔（秒）
+    collection-interval: 10
+    # 最大保留记录数
+    max-records: 10000
