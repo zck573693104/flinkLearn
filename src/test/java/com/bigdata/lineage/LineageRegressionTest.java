@@ -1,5 +1,6 @@
 package com.bigdata.lineage;
 
+import com.bigdata.lineage.model.TableLineageResult;
 import com.bigdata.lineage.parser.FlinkSQLLineageExtractor;
 import com.bigdata.lineage.parser.SparkSQLLineageExtractor;
 import com.bigdata.lineage.parser.PaimonCatalogLineageExtractor;
@@ -155,7 +156,7 @@ public class LineageRegressionTest {
                         "FROM events " +
                         "WHERE dt = '2024-01-01' " +
                         "GROUP BY user_id";
-            List<SparkSQLLineageExtractor.TableLineageResult> results = 
+            List<TableLineageResult> results = 
                 extractor.extractTableLineages(sql);
             
             assert results.size() == 1 : "应该返回 1 个结果";
@@ -171,7 +172,7 @@ public class LineageRegressionTest {
                         "FROM table_a a " +
                         "JOIN table_b b ON a.id = b.a_id " +
                         "JOIN table_c c ON b.c_id = c.id";
-            List<SparkSQLLineageExtractor.TableLineageResult> results = 
+            List<TableLineageResult> results = 
                 extractor.extractTableLineages(sql);
             
             assert results.size() == 1 : "应该返回 1 个结果";

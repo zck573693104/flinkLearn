@@ -1,5 +1,6 @@
 package com.bigdata.lineage;
 
+import com.bigdata.lineage.model.TableLineageResult;
 import com.bigdata.lineage.parser.FlinkSQLLineageExtractor;
 import com.bigdata.lineage.parser.SparkSQLLineageExtractor;
 import com.bigdata.lineage.parser.PaimonCatalogLineageExtractor;
@@ -63,7 +64,7 @@ public class SimpleRegressionTest {
         SparkSQLLineageExtractor ext = new SparkSQLLineageExtractor();
         
         // Test INSERT OVERWRITE
-        List<SparkSQLLineageExtractor.TableLineageResult> r1 = 
+        List<TableLineageResult> r1 = 
             ext.extractTableLineages("INSERT OVERWRITE TABLE t1 SELECT user_id, COUNT(*) FROM events GROUP BY user_id");
         assert r1.size() == 1 && r1.get(0).getTargetTable().equals("t1") : "Test 1 failed";
         System.out.println("  [OK] INSERT OVERWRITE");
