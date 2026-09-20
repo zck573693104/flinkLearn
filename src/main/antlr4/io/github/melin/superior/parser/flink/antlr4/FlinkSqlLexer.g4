@@ -76,6 +76,8 @@ KW_TO: [Tt][Oo];
 KW_ADD: [Aa][Dd][Dd];
 KW_COLUMN: [Cc][Oo][Ll][Uu][Mm][Nn];
 KW_SET: [Ss][Ee][Tt];
+KW_USE: [Uu][Ss][Ee];
+KW_UNNEST: [Uu][Nn][Nn][Ee][Ss][Tt];
 
 // ============================================
 // 数据类型关键字
@@ -132,7 +134,7 @@ DOUBLE_QUOTED_STRING: '"' (~["])+ '"';
 // 字符串和数字
 // ============================================
 
-STRING: '\'' (~'\'')+ '\'';
+STRING: '\'' ( '\'\'' | ~['] )* '\'';
 
 NUMBER: [0-9]+;
 DECIMAL_NUMBER: [0-9]+'.'[0-9]+;

@@ -86,9 +86,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(1, lineages.size());
-        assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTable() == null);
+        assertTrue(lineages.isEmpty(), "无血缘语句应被过滤");
     }
 
     @Test
@@ -98,9 +96,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(1, lineages.size());
-        assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTable() == null);
+        assertTrue(lineages.isEmpty(), "无血缘语句应被过滤");
     }
 
     @Test
@@ -110,9 +106,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(1, lineages.size());
-        assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTable() == null);
+        assertTrue(lineages.isEmpty(), "无血缘语句应被过滤");
     }
 
     // ============================================
@@ -142,9 +136,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(1, lineages.size());
-        assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTable() == null);
+        assertTrue(lineages.isEmpty(), "无血缘语句应被过滤");
     }
 
     @Test
@@ -199,9 +191,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(1, lineages.size());
-        assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTable() == null);
+        assertTrue(lineages.isEmpty(), "无血缘语句应被过滤");
     }
 
     @Test
@@ -366,9 +356,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(1, lineages.size());
-        assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTable() == null);
+        assertTrue(lineages.isEmpty(), "无血缘语句应被过滤");
     }
 
     // ============================================
@@ -384,7 +372,7 @@ public class MultiEngineSQLLineageParserTest {
 
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
-        assertEquals(3, lineages.size());
+        assertEquals(2, lineages.size());
         
         // 第一条：t1 <- source1
         assertEquals("t1", lineages.get(0).getTargetTable());
@@ -394,9 +382,6 @@ public class MultiEngineSQLLineageParserTest {
         assertEquals("t2", lineages.get(1).getTargetTable());
         assertTrue(lineages.get(1).getSourceTables().contains("source2"));
         
-        // 第三条：DROP TABLE（无血缘）
-        assertTrue(lineages.get(2).getSourceTables().isEmpty());
-        assertTrue(lineages.get(2).getTargetTable() == null);
     }
 
     // ============================================
@@ -439,5 +424,57 @@ public class MultiEngineSQLLineageParserTest {
             // 即使 SQL 无效，也应该返回空结果而不是抛出异常
             assertTrue(lineages.isEmpty() || lineages.get(0).getSourceTables().isEmpty());
         });
+    }
+
+    // ============================================
+    // 真实语料语法覆盖测试
+    // ============================================
+
+    @Test
+    public void testIfFunctionWithEmptyStringAndNegativeNumber() {
+        String sql = "INSERT INTO t_out SELECT IF(x IS NOT NULL OR x <> '', CAST(x AS BIGINT), -99999) AS y FROM t_in";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertFalse(lineages.isEmpty());
+        TableLineage lineage = lineages.get(0);
+        assertEquals("t_out", lineage.getTargetTable());
+        assertTrue(lineage.getSourceTables().contains("t_in"));
+    }
+
+    @Test
+    public void testUnnestInFromClause() {
+        String sql = "INSERT INTO t_out SELECT a FROM kafka_src, UNNEST(eventBodyList) AS t (a, b)";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertFalse(lineages.isEmpty());
+        TableLineage lineage = lineages.get(0);
+        assertEquals("t_out", lineage.getTargetTable());
+        assertTrue(lineage.getSourceTables().contains("kafka_src"));
+        assertFalse(lineage.getSourceTables().contains("t"), "UNNEST 别名不应计入源表");
+    }
+
+    @Test
+    public void testArraySubscriptFieldAccess() {
+        String sql = "INSERT INTO t_out SELECT CAST(signals[1].value AS INT) AS v FROM t_in";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertFalse(lineages.isEmpty());
+        TableLineage lineage = lineages.get(0);
+        assertEquals("t_out", lineage.getTargetTable());
+        assertTrue(lineage.getSourceTables().contains("t_in"));
+    }
+
+    @Test
+    public void testUseAndDropStatementsIgnored() {
+        String sql = "USE my_db; DROP TABLE IF EXISTS old_t; INSERT INTO t_out SELECT a FROM t_in";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        assertEquals("t_out", lineages.get(0).getTargetTable());
+        assertTrue(lineages.get(0).getSourceTables().contains("t_in"));
     }
 }

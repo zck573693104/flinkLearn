@@ -80,10 +80,11 @@ public class MultiEngineSQLLineageParser {
             // 分割多语句（如果存在多个 SQL）
             List<String> statements = SqlSplitUtils.splitStatements(sql);
             
-            // 识别引擎并提取血缘
+            // 识别引擎并提取血缘，丢弃 USE/DROP 等无血缘语句的结果
             List<TableLineage> lineages = statements.stream()
                     .map(this::extractWithAutoDetect)
                     .filter(Objects::nonNull)
+                    .filter(this::hasLineage)
                     .collect(Collectors.toList());
             
             // 缓存结果
