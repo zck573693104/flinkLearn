@@ -72,7 +72,8 @@ public class MultiEngineSQLLineageParser {
             List<TableLineage> cached = cache.get(cacheKey);
             if (cached != null) {
                 log.debug("命中缓存：{}", cacheKey.substring(0, Math.min(50, cacheKey.length())));
-                return cached;
+                // 缓存里放的是共享对象，返回副本以免调用方改动污染缓存
+                return new ArrayList<>(cached);
             }
         }
         
@@ -84,7 +85,7 @@ public class MultiEngineSQLLineageParser {
             List<TableLineage> lineages = statements.stream()
                     .map(this::extractWithAutoDetect)
                     .filter(Objects::nonNull)
-                    .filter(this::hasLineage)
+                    .filter(TableLineage::hasLineage)
                     .collect(Collectors.toList());
             
             // 缓存结果
@@ -126,7 +127,7 @@ public class MultiEngineSQLLineageParser {
         
         // 无引擎能完整解析：回退到第一个带血缘的部分结果
         for (TableLineage result : new TableLineage[]{flinkResult, sparkResult, prestoResult}) {
-            if (result != null && hasLineage(result)) {
+            if (result != null && result.hasLineage()) {
                 log.warn("SQL 存在语法错误，血缘为部分解析结果（可能缺表/错表）: {}",
                         sql.substring(0, Math.min(100, sql.length())));
                 return result;
@@ -145,7 +146,7 @@ public class MultiEngineSQLLineageParser {
      * 无语法错误且含血缘的结果才可优先采纳
      */
     private boolean isCleanLineage(TableLineage lineage) {
-        return lineage != null && !lineage.isParseError() && hasLineage(lineage);
+        return lineage != null && !lineage.isParseError() && lineage.hasLineage();
     }
     
     /**
@@ -182,15 +183,6 @@ public class MultiEngineSQLLineageParser {
             log.trace("Presto SQL 解析失败：{}", e.getMessage());
             return null;
         }
-    }
-    
-    /**
-     * 判断是否提取到有效血缘（存在目标表或源表）
-     */
-    private boolean hasLineage(TableLineage lineage) {
-        boolean hasTarget = lineage.getTargetTable() != null && !lineage.getTargetTable().isEmpty();
-        boolean hasSource = lineage.getSourceTables() != null && !lineage.getSourceTables().isEmpty();
-        return hasTarget || hasSource;
     }
     
     /**

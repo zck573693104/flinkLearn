@@ -19,6 +19,9 @@ public class TableLineageExtractor {
     
     private static final double DEFAULT_CONFIDENCE = 0.95;
     
+    /** 语法有错误时血缘只是错误恢复的副产品，必须让下游能区分出来 */
+    private static final double PARSE_ERROR_CONFIDENCE = 0.5;
+    
     private static final Set<String> WINDOW_FUNCTIONS = new HashSet<>(Arrays.asList(
             "TUMBLE", "HOP", "CUMULATE", "SESSION",
             "ROW_NUMBER", "RANK", "DENSE_RANK", "ROWNUM"
@@ -68,7 +71,7 @@ public class TableLineageExtractor {
                     .hasWindowFunc(visitor.hasWindowFunc())
                     .parseError(syntaxErrors.get() > 0)
                     .originalSql(sql)
-                    .confidence(DEFAULT_CONFIDENCE)
+                    .confidence(syntaxErrors.get() > 0 ? PARSE_ERROR_CONFIDENCE : DEFAULT_CONFIDENCE)
                     .build();
                     
         } catch (Exception e) {
@@ -121,7 +124,7 @@ public class TableLineageExtractor {
             // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表）
             for (FlinkSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
                 if (cteCtx.cteName() != null) {
-                    cteNames.add(cteCtx.cteName().getText());
+                    cteNames.add(cteCtx.cteName().getText().toLowerCase());
                 }
             }
             
@@ -142,17 +145,17 @@ public class TableLineageExtractor {
         
         @Override
         public Void visitCreateTableStatement(FlinkSqlParser.CreateTableStatementContext ctx) {
-            // CTAS: CREATE TABLE target AS SELECT ... FROM source
-            if (ctx.tablePath() != null && ctx.queryExpression() != null) {
-                targetTable = extractTableName(ctx.tablePath());
-                processType = "CTAS";
-                
-                // 提取源表
-                visit(ctx.queryExpression());
+            if (ctx.tablePath() == null) {
+                return null;
             }
-            // CREATE TABLE DDL（无血缘）
-            else if (ctx.tablePath() != null) {
-                targetTable = extractTableName(ctx.tablePath());
+            targetTable = extractTableName(ctx.tablePath());
+            
+            if (ctx.queryExpression() != null) {
+                // CREATE TABLE / VIEW ... AS SELECT：源表来自查询
+                processType = ctx.KW_VIEW() != null ? "CREATE_VIEW" : "CTAS";
+                visit(ctx.queryExpression());
+            } else {
+                // 纯 DDL（无血缘）
                 processType = "CREATE_TABLE";
             }
             
@@ -199,17 +202,22 @@ public class TableLineageExtractor {
                 visit(ctx.queryExpression());
             }
             
+            // JOIN ON 条件中的子查询（如 ON x.id IN (SELECT ...)）同样产生表依赖
+            if (ctx.expression() != null) {
+                visit(ctx.expression());
+            }
+            
             return null;
         }
         
         /**
-         * 添加源表（排除 CTE 临时名称）
+         * 添加源表（排除 CTE 临时名称，SQL 标识符大小写不敏感）
          */
         private void addSourceTable(String tableName) {
             if (tableName == null || tableName.isEmpty()) {
                 return;
             }
-            if (cteNames.contains(tableName)) {
+            if (cteNames.contains(tableName.toLowerCase())) {
                 return;
             }
             sourceTables.add(tableName);

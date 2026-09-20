@@ -66,7 +66,8 @@ public class FlinkSQLLineageParser {
             List<TableLineage> cached = cache.get(cacheKey);
             if (cached != null) {
                 log.debug("命中缓存：{}", cacheKey.substring(0, Math.min(50, cacheKey.length())));
-                return cached;
+                // 缓存里放的是共享对象，返回副本以免调用方改动污染缓存
+                return new ArrayList<>(cached);
             }
         }
         
@@ -74,10 +75,11 @@ public class FlinkSQLLineageParser {
             // 分割多语句（如果存在多个 SQL）
             List<String> statements = SqlSplitUtils.splitStatements(sql);
             
-            // 提取每个语句的血缘
+            // 提取每个语句的血缘，丢弃 USE/DROP 等无血缘语句的结果
             List<TableLineage> lineages = statements.stream()
                     .map(this::extractSingleStatement)
                     .filter(Objects::nonNull)
+                    .filter(TableLineage::hasLineage)
                     .collect(Collectors.toList());
             
             // 缓存结果

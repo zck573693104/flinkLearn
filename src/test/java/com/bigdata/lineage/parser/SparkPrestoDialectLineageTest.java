@@ -241,4 +241,62 @@ class SparkPrestoDialectLineageTest {
         assertEquals("dwd.t1", lineages.get(0).getTargetTable());
         assertTrue(lineages.get(0).getSourceTables().contains("ods.s1"));
     }
+
+    /**
+     * 注释里的单引号曾让切分器误判字符串状态，两条 INSERT 被并成一条：
+     * 目标表只剩一个、两条血缘被揉成一条
+     */
+    @Test
+    void multiEngineKeepsStatementsSeparateWhenCommentsContainQuotes() {
+        MultiEngineSQLLineageParser parser = new MultiEngineSQLLineageParser(false);
+        var lineages = parser.extractTableLineages(
+                "-- step; it's fine\n"
+                        + "INSERT INTO dwd.a SELECT * FROM ods.x;\n"
+                        + "INSERT INTO dwd.b SELECT * FROM ods.y");
+        assertEquals(2, lineages.size(), "两条 INSERT 应各自产出一条血缘: " + lineages);
+        assertEquals("dwd.a", lineages.get(0).getTargetTable());
+        assertEquals(java.util.Set.of("ods.x"), lineages.get(0).getSourceTables());
+        assertEquals("dwd.b", lineages.get(1).getTargetTable());
+        assertEquals(java.util.Set.of("ods.y"), lineages.get(1).getSourceTables());
+    }
+
+    @Test
+    void cteNameExclusionIsCaseInsensitive() {
+        TableLineage lineage = spark.extractFromSql(
+                "WITH MyCte AS (SELECT id FROM ods.a) INSERT INTO dwd.t SELECT * FROM mycte");
+        assertEquals(java.util.Set.of("ods.a"), lineage.getSourceTables(),
+                "CTE 名大小写混用不得泄漏成输入表");
+    }
+
+    @Test
+    void joinOnSubqueryContributesSourceTables() {
+        assertSparkLineage(
+                "INSERT INTO dwd.t SELECT x.id FROM ods.x x JOIN ods.y y ON x.id IN (SELECT id FROM ods.z)",
+                "dwd.t", "ods.x", "ods.y", "ods.z");
+        assertPrestoLineage(
+                "INSERT INTO dwd.t SELECT x.id FROM ods.x x JOIN ods.y y ON x.id IN (SELECT id FROM ods.z)",
+                "dwd.t", "ods.x", "ods.y", "ods.z");
+    }
+
+    @Test
+    void createViewIsNotReportedAsCtas() {
+        TableLineage sparkView = spark.extractFromSql("CREATE TEMPORARY VIEW v AS SELECT * FROM ods.a");
+        assertEquals("CREATE_VIEW", sparkView.getProcessType());
+        assertEquals("v", sparkView.getTargetTable());
+        assertEquals(java.util.Set.of("ods.a"), sparkView.getSourceTables());
+
+        TableLineage prestoView = presto.extractFromSql("CREATE VIEW v AS SELECT * FROM ods.a");
+        assertEquals("CREATE_VIEW", prestoView.getProcessType());
+    }
+
+    @Test
+    void parseErrorDowngradesConfidence() {
+        TableLineage bad = spark.extractFromSql("INSERT INTO dwd.t SELECT FROM WHERE");
+        assertTrue(bad.isParseError(), "非法 SQL 应标记 parseError");
+        assertTrue(bad.getConfidence() < 0.95, "parseError 时置信度必须低于正常值: " + bad.getConfidence());
+
+        TableLineage good = spark.extractFromSql("INSERT INTO dwd.t SELECT * FROM ods.s");
+        assertFalse(good.isParseError());
+        assertEquals(0.95, good.getConfidence(), 0.001);
+    }
 }

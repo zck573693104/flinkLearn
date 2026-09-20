@@ -249,4 +249,36 @@ public class FlinkSQLLineageParserTest {
         Assert.assertFalse("常见列名不得被词法保留", lineage.isParseError());
         Assert.assertEquals(java.util.Set.of("ods.src_id"), lineage.getSourceTables());
     }
+
+    /**
+     * USE 一类无血缘语句不应产生结果行（与 MultiEngine 入口保持一致）
+     */
+    @Test
+    public void testUseStatementProducesNoLineageRow() {
+        List<TableLineage> lineages = parser.extractTableLineages(
+                "USE my_db; INSERT INTO dwd.t SELECT * FROM ods.s");
+
+        Assert.assertEquals("只应保留有血缘的语句", 1, lineages.size());
+        Assert.assertEquals("dwd.t", lineages.get(0).getTargetTable());
+    }
+
+    @Test
+    public void testJoinOnSubqueryContributesSourceTables() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t SELECT x.id FROM ods.x x JOIN ods.y y ON x.id IN (SELECT id FROM ods.z)");
+
+        Assert.assertFalse(lineage.isParseError());
+        Assert.assertTrue("ON 子查询里的表也是上游: " + lineage.getSourceTables(),
+                lineage.getSourceTables().contains("ods.z"));
+    }
+
+    @Test
+    public void testCreateViewProcessType() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "CREATE TEMPORARY VIEW v AS SELECT * FROM ods.a");
+
+        Assert.assertEquals("CREATE_VIEW", lineage.getProcessType());
+        Assert.assertEquals("v", lineage.getTargetTable());
+        Assert.assertTrue(lineage.getSourceTables().contains("ods.a"));
+    }
 }

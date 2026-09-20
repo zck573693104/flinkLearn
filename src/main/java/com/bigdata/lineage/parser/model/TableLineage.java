@@ -62,6 +62,14 @@ public class TableLineage {
     private String originalSql;
     
     /**
+     * 是否解析出了血缘关系（USE/DROP 之类的语句既无输入也无输出表）
+     */
+    public boolean hasLineage() {
+        boolean hasTarget = targetTable != null && !targetTable.isEmpty();
+        return hasTarget || (sourceTables != null && !sourceTables.isEmpty());
+    }
+    
+    /**
      * 获取所有涉及的表（包括源表和目标表）
      */
     public Set<String> getAllTables() {
