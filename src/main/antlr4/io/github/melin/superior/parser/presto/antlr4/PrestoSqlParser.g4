@@ -33,7 +33,11 @@ useStatement
 
 insertStatement
     : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath 
-      (LPAREN columnNameList RPAREN)? queryExpression
+      (LPAREN columnNameList RPAREN)? (KW_VALUES valuesTuple (COMMA valuesTuple)* | queryExpression)
+    ;
+
+valuesTuple
+    : LPAREN (expression (COMMA expression)*)? RPAREN
     ;
 
 // ============================================
@@ -95,8 +99,10 @@ tableReference
     | LPAREN queryExpression RPAREN (alias)?
     | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
-    | KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
-    | tableReference joinType? KW_JOIN KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
+    | KW_UNNEST LPAREN expression (COMMA expression)* RPAREN (KW_WITH KW_ORDINALITY)? (aliasWithColumns | alias)?
+    | tableReference joinType? KW_JOIN KW_UNNEST LPAREN expression (COMMA expression)* RPAREN
+      (KW_WITH KW_ORDINALITY)? (aliasWithColumns | alias)? (KW_ON KW_TRUE)?
+    | tableReference KW_TABLESAMPLE (KW_BERNOULLI | KW_SYSTEM) LPAREN NUMBER RPAREN (alias)?
     ;
 
 aliasWithColumns
@@ -121,7 +127,19 @@ whereClause
     ;
 
 groupByClause
-    : KW_GROUP KW_BY columnList
+    : KW_GROUP KW_BY groupingElement (COMMA groupingElement)*
+    ;
+
+// GROUP BY a, GROUPING SETS ((a,b), ()) / CUBE(...) / ROLLUP(...)
+groupingElement
+    : KW_GROUPING KW_SETS LPAREN groupingSet (COMMA groupingSet)* RPAREN
+    | (KW_CUBE | KW_ROLLUP) LPAREN expression (COMMA expression)* RPAREN
+    | expression (alias)?
+    ;
+
+groupingSet
+    : LPAREN (expression (COMMA expression)*)? RPAREN
+    | expression
     ;
 
 havingClause
@@ -201,7 +219,12 @@ expression
     | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | KW_EXISTS LPAREN queryExpression RPAREN
     | LPAREN queryExpression RPAREN
+    | KW_INTERVAL expression timeUnit (KW_TO timeUnit)?
+    | KW_EXTRACT LPAREN timeUnit KW_FROM expression RPAREN
+    | KW_ARRAY LBRACKET expression (COMMA expression)* RBRACKET
+    | KW_ROW LPAREN (expression (COMMA expression)*)? RPAREN
     | primaryExpression
     | functionCall
     | castExpression
@@ -270,21 +293,32 @@ dataType
     | KW_ARRAY LT dataType GT
     | KW_MAP LT dataType COMMA dataType GT
     | KW_ROW LT rowType GT
+    // Trino 的行类型写作 ROW(a INTEGER, b VARCHAR)，圆号形式才是标准写法
+    | KW_ROW LPAREN rowType RPAREN
     ;
 
+// Presto 的具名字段写作 ROW(a INTEGER, b VARCHAR)，也允许纯位置 ROW(INTEGER, VARCHAR)
 rowType
-    : field (COMMA field)*
+    : rowField (COMMA rowField)*
     ;
 
-field
-    : uid COLON dataType
+rowField
+    : uid dataType
+    | dataType
+    ;
+
+// INTERVAL '1' DAY / EXTRACT(DAY FROM ts) 的时间单位
+timeUnit
+    : KW_SECOND | KW_MINUTE | KW_HOUR | KW_DAY | KW_WEEK | KW_MONTH | KW_QUARTER | KW_YEAR
     ;
 
 typeName
     : KW_INT | KW_BIGINT | KW_SMALLINT | KW_TINYINT
-    | KW_DECIMAL | KW_STRING | KW_CHAR | KW_BOOLEAN
+    | KW_DECIMAL | KW_STRING | KW_BOOLEAN
+    | KW_CHAR | KW_CHARACTER KW_VARYING
     | KW_DATE | KW_TIME | KW_TIMESTAMP
     | KW_BINARY | KW_VARBINARY
+    | KW_DOUBLE | KW_FLOAT | KW_REAL
     | KW_ARRAY | KW_MAP | KW_ROW
     | KW_JSON | KW_IPADDRESS | KW_UUID
     ;
@@ -298,6 +332,11 @@ uid
     | QUOTED_UID
     | DOUBLE_QUOTED_ID
     | KW_DEFAULT   // default 数据库名等场景下关键字可作标识符
+    | timeUnit     // day/month/year 等在 Presto 里非保留字，仍可作列名
+    | KW_GROUPING
+    | KW_SETS
+    | KW_ORDINALITY
+    | KW_EXTRACT
     ;
 
 alias
@@ -348,7 +387,7 @@ tableProperties
     ;
 
 tableProperty
-    : uid EQ expression
+    : (uid | STRING) EQ expression
     ;
 
 // ============================================

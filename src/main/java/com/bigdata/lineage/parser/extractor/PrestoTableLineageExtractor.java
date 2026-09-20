@@ -200,8 +200,8 @@ public class PrestoTableLineageExtractor {
             }
             
             // JOIN ON 条件中的子查询（如 ON x.id IN (SELECT ...)）同样产生表依赖
-            if (ctx.expression() != null) {
-                visit(ctx.expression());
+            for (PrestoSqlParser.ExpressionContext exprCtx : ctx.expression()) {
+                visit(exprCtx);
             }
             
             return null;

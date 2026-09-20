@@ -16,12 +16,25 @@ statement
     | createTableStatement SEMICOLON?
     | cteStatement SEMICOLON?
     | dropTableStatement SEMICOLON?
+    | truncateStatement SEMICOLON?
     | alterTableStatement SEMICOLON?
+    | setStatement SEMICOLON?
     | useStatement SEMICOLON?
     ;
 
 useStatement
     : KW_USE tablePath
+    ;
+
+// SQL Client 的会话参数语句：SET 'k' = 'v' / SET k = 'v' / SET ('k'='v')
+// 属性键可能含点号和短横线（table.sql-dialect），且首段可以是关键字（table）
+setStatement
+    : KW_SET (STRING (EQ)? expression | propertyKey EQ expression
+             | LPAREN tableProperty (COMMA tableProperty)* RPAREN)?
+    ;
+
+propertyKey
+    : (uid | KW_TABLE) ((DOT | MINUS) (uid | KW_TABLE))*
     ;
 
 // ============================================
@@ -30,7 +43,11 @@ useStatement
 
 insertStatement
     : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath 
-      (LPAREN columnNameList RPAREN)? queryExpression
+      (LPAREN columnNameList RPAREN)? (KW_VALUES valuesTuple (COMMA valuesTuple)* | queryExpression)
+    ;
+
+valuesTuple
+    : LPAREN (expression (COMMA expression)*)? RPAREN
     ;
 
 // ============================================
@@ -182,6 +199,10 @@ expression
     | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | KW_EXISTS LPAREN queryExpression RPAREN
+    // 数组/行构造器：ARRAY[1, 2]、ROW(1, 'a')
+    | KW_ARRAY LBRACKET expression (COMMA expression)* RBRACKET
+    | KW_ROW LPAREN expression (COMMA expression)+ RPAREN
     | LPAREN queryExpression RPAREN
     | KW_INTERVAL expression timeUnit
     | caseExpression
@@ -235,13 +256,23 @@ literal
 dataType
     : typeName
     | typeName LPAREN NUMBER (COMMA NUMBER)? RPAREN
+    | KW_ARRAY LT dataType GT
+    | KW_MAP LT dataType COMMA dataType GT
+    | KW_ROW LT rowField (COMMA rowField)* GT
+    ;
+
+// Flink 具名字段写作 ROW<a TIMESTAMP, b STRING>（名字与类型之间没有冒号）
+rowField
+    : uid dataType
     ;
 
 typeName
     : KW_INT | KW_BIGINT | KW_SMALLINT | KW_TINYINT
-    | KW_DECIMAL | KW_STRING | KW_CHAR | KW_BOOLEAN
+    | KW_DECIMAL | KW_STRING | KW_BOOLEAN
+    | KW_CHAR | KW_CHARACTER KW_VARYING
     | KW_DATE | KW_TIME | KW_TIMESTAMP
     | KW_BINARY | KW_VARBINARY
+    | KW_DOUBLE | KW_FLOAT
     | KW_ARRAY | KW_MAP | KW_ROW
     ;
 
@@ -312,26 +343,58 @@ frameBound
 
 createTableStatement
     : KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath 
-      LPAREN columnDefinition (COMMA columnDefinition)* RPAREN tableProperties?
-    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
+      LPAREN tableElement (COMMA tableElement)* RPAREN tableOption*
+    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath
+      (LPAREN tableElement (COMMA tableElement)* RPAREN)? KW_AS queryExpression
     | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_VIEW (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
+    ;
+
+// 列定义与表级约束（WATERMARK / PRIMARY KEY）混写在同一个括号列表里
+tableElement
+    : columnDefinition
+    | watermarkSpec
+    | constraintSpec
+    ;
+
+// WATERMARK FOR rowtime_col AS rowtime_col - INTERVAL '5' SECOND
+watermarkSpec
+    : KW_WATERMARK KW_FOR uid KW_AS expression
+    ;
+
+// PRIMARY KEY (id, dt) NOT ENFORCED：Flink upsert 表的声明式主键
+constraintSpec
+    : KW_PRIMARY KW_KEY LPAREN uid (COMMA uid)* RPAREN (KW_NOT KW_ENFORCED)?
+    ;
+
+// Hive 表选项：Flink 的 Hive catalog 与 SQL Client 脚本会直接写这些子句
+tableOption
+    : tableProperties
+    | KW_PARTITIONED KW_BY LPAREN partitionField (COMMA partitionField)* RPAREN
+    | KW_STORED KW_AS uid
+    ;
+
+// PARTITIONED BY (dt STRING) 或仅写列名 PARTITIONED BY (dt)
+partitionField
+    : uid dataType?
     ;
 
 columnDefinition
     : uid dataType columnConstraint*
+    | uid KW_AS expression   // 计算列：proc_ts AS PROCTIME()
     ;
 
 columnConstraint
-    : KW_PRIMARY_KEY
-    | KW_PRIMARY KW_KEY
+    : KW_PRIMARY KW_KEY (KW_NOT KW_ENFORCED)?
     | KW_NOT KW_NULL
     | KW_NULL
     | KW_DEFAULT expression
     | KW_COMMENT STRING
+    | KW_METADATA (KW_FROM STRING)? KW_VIRTUAL?
     ;
 
 tableProperties
     : KW_WITH LPAREN tableProperty (COMMA tableProperty)* RPAREN
+    | KW_TBLPROPERTIES LPAREN tableProperty (COMMA tableProperty)* RPAREN
     ;
 
 tableProperty
@@ -344,6 +407,11 @@ tableProperty
 
 dropTableStatement
     : KW_DROP KW_TABLE (KW_IF KW_EXISTS)? tablePath
+    ;
+
+// TRUNCATE TABLE 只清空数据，无上下游数据流，因此不产生血缘
+truncateStatement
+    : KW_TRUNCATE KW_TABLE tablePath
     ;
 
 // ============================================

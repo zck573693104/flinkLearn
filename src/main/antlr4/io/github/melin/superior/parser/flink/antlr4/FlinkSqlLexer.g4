@@ -42,7 +42,8 @@ KW_PRIMARY: [Pp][Rr][Ii][Mm][Aa][Rr][Yy];
 KW_KEY: [Kk][Ee][Yy];
 KW_DEFAULT: [Dd][Ee][Ff][Aa][Uu][Ll][Tt];
 KW_COMMENT: [Cc][Oo][Mm][Mm][Ee][Nn][Tt];
-KW_PRIMARY_KEY: [Pp][Rr][Ii][Mm][Aa][Rr][Yy] [Kk][Ee][Yy];
+// KW_PRIMARY_KEY: 词法规则会忽略规则内空白，`PRIMARY KEY` 写法实际匹配的是 PRIMARYKEY；
+// 两词形式统一由 KW_PRIMARY KW_KEY 在 Parser 侧组合
 KW_UNBOUNDED: [Uu][Nn][Bb][Oo][Uu][Nn][Dd][Ee][Dd];
 KW_PRECEDING: [Pp][Rr][Ee][Cc][Ee][Dd][Ii][Nn][Gg];
 KW_FOLLOWING: [Ff][Oo][Ll][Ll][Oo][Ww][Ii][Nn][Gg];
@@ -87,9 +88,15 @@ KW_INT: [Ii][Nn][Tt] | [Ii][Nn][Tt][Ee][Gg][Ee][Rr];
 KW_BIGINT: [Bb][Ii][Gg][Ii][Nn][Tt];
 KW_SMALLINT: [Ss][Mm][Aa][Ll][Ll][Ii][Nn][Tt];
 KW_TINYINT: [Tt][Ii][Nn][Yy][Ii][Nn][Tt];
+KW_TRUNCATE: [Tt][Rr][Uu][Nn][Cc][Aa][Tt][Ee];
+KW_DOUBLE: [Dd][Oo][Uu][Bb][Ll][Ee];
+KW_FLOAT: [Ff][Ll][Oo][Aa][Tt];
 KW_DECIMAL: [Dd][Ee][Cc][Ii][Mm][Aa][Ll] | [Nn][Uu][Mm][Ee][Rr][Ii][Cc];
-KW_STRING: [Ss][Tt][Rr][Ii][Nn][Gg] | [Vv][Aa][Rr][Cc][Hh][Aa][Rr] | [Cc][Hh][Aa][Rr][Aa][Cc][Tt][Ee][Rr] [Vv][Aa][Rr][Yy][Ii][Nn][Gg];
-KW_CHAR: [Cc][Hh][Aa][Rr][Aa][Cc][Tt][Ee][Rr] | [Cc][Hh][Aa][Rr];
+KW_STRING: [Ss][Tt][Rr][Ii][Nn][Gg] | [Vv][Aa][Rr][Cc][Hh][Aa][Rr];
+KW_CHAR: [Cc][Hh][Aa][Rr];
+// CHARACTER VARYING 是两个词：词法规则内的空白会被忽略，必须拆成两个 token 在 Parser 侧组合
+KW_CHARACTER: [Cc][Hh][Aa][Rr][Aa][Cc][Tt][Ee][Rr];
+KW_VARYING: [Vv][Aa][Rr][Yy][Ii][Nn][Gg];
 KW_BOOLEAN: [Bb][Oo][Oo][Ll][Ee][Aa][Nn] | [Bb][Oo][Oo][Ll];
 KW_DATE: [Dd][Aa][Tt][Ee];
 KW_TIME: [Tt][Ii][Mm][Ee];
@@ -116,6 +123,15 @@ KW_DAY: [Dd][Aa][Yy];
 KW_MONTH: [Mm][Oo][Nn][Tt][Hh];
 KW_QUARTER: [Qq][Uu][Aa][Rr][Tt][Ee][Rr];
 KW_YEAR: [Yy][Ee][Aa][Rr];
+// Flink DDL 常用：计算列/时间戳占位/元数据列/Hive 表选项/SET 语句
+KW_WATERMARK: [Ww][Aa][Tt][Ee][Rr][Mm][Aa][Rr][Kk];
+KW_METADATA: [Mm][Ee][Tt][Aa][Dd][Aa][Tt][Aa];
+KW_VIRTUAL: [Vv][Ii][Rr][Tt][Uu][Aa][Ll];
+KW_VALUES: [Vv][Aa][Ll][Uu][Ee][Ss];
+KW_PARTITIONED: [Pp][Aa][Rr][Tt][Ii][Tt][Ii][Oo][Nn][Ee][Dd];
+KW_STORED: [Ss][Tt][Oo][Rr][Ee][Dd];
+KW_TBLPROPERTIES: [Tt][Bb][Ll][Pp][Rr][Oo][Pp][Ee][Rr][Tt][Ii][Ee][Ss];
+KW_ENFORCED: [Ee][Nn][Ff][Oo][Rr][Cc][Ee][Dd];
 
 
 // ============================================

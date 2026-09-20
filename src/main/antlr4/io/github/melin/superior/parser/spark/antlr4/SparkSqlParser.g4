@@ -20,6 +20,7 @@ statement
     | showStatement SEMICOLON?
     | setStatement SEMICOLON?
     | dropTableStatement SEMICOLON?
+    | truncateStatement SEMICOLON?
     | alterTableStatement SEMICOLON?
     | updateStatement SEMICOLON?
     | deleteStatement SEMICOLON?
@@ -35,9 +36,17 @@ useStatement
 // ============================================
 
 insertStatement
-    : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath
+    // INSERT OVERWRITE [LOCAL] DIRECTORY '/path' [STORED AS fmt | USING fmt] SELECT ...
+    // 无目标表，但 SELECT 的输入表仍是真实上游
+    : KW_INSERT KW_OVERWRITE KW_LOCAL? KW_DIRECTORY STRING
+      (KW_STORED KW_AS uid | KW_USING uid)? queryExpression
+    | KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath
       (KW_PARTITION LPAREN partitionSpec (COMMA partitionSpec)* RPAREN)?
-      (LPAREN columnNameList RPAREN)? queryExpression
+      (LPAREN columnNameList RPAREN)? (KW_VALUES valuesTuple (COMMA valuesTuple)* | queryExpression)
+    ;
+
+valuesTuple
+    : LPAREN (expression (COMMA expression)*)? RPAREN
     ;
 
 // Hive 风格分区说明：PARTITION (dt='2024-01-01') 或 PARTITION (dt)
@@ -58,7 +67,7 @@ selectStatement
 // ============================================
 
 cteStatement
-    : KW_WITH cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
+    : KW_WITH KW_RECURSIVE? cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
     ;
 
 cteDefinition
@@ -72,10 +81,15 @@ cteDefinition
 
 queryExpression
     : selectClause fromClause? whereClause? groupByClause? havingClause? 
-      distributeClause? orderByClause? distributeClause? limitClause? windowClause? pivotClause?
+      qualifyClause? distributeClause? orderByClause? distributeClause? limitClause? windowClause? pivotClause?
       (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_EXCEPT (KW_DISTINCT | KW_ALL)? queryExpression)*
+    ;
+
+// Spark 3.5+: QUALIFY 按窗口函数结果过滤行
+qualifyClause
+    : KW_QUALIFY expression
     ;
 
 // Hive/Spark 特有：DISTRIBUTE BY / CLUSTER BY / SORT BY 控制数据分发与排序
@@ -113,15 +127,19 @@ tableReference
     | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
     | tableReference lateralView
+    | tableReference KW_TABLESAMPLE LPAREN NUMBER (KW_PERCENT | KW_ROWS)? RPAREN (alias)?
     ;
 
 // Hive/Spark 特有：LATERAL VIEW [OUTER] udf(...) [表别名] AS 列别名[, 列别名...]
 lateralView
-    : KW_LATERAL_VIEW KW_OUTER? functionName LPAREN (expression (COMMA expression)*)? RPAREN uid? KW_AS uid (COMMA uid)*
+    : KW_LATERAL KW_VIEW KW_OUTER? functionName LPAREN (expression (COMMA expression)*)? RPAREN
+      uid? KW_AS uid (COMMA uid)*
     ;
 
 joinType
     : KW_LEFT KW_OUTER?
+    | KW_LEFT KW_SEMI
+    | KW_LEFT KW_ANTI
     | KW_RIGHT KW_OUTER?
     | KW_FULL KW_OUTER?
     | KW_INNER
@@ -139,7 +157,19 @@ whereClause
     ;
 
 groupByClause
-    : KW_GROUP KW_BY columnList
+    : KW_GROUP KW_BY groupingElement (COMMA groupingElement)*
+    ;
+
+// GROUP BY a, GROUPING SETS ((a,b), ()) / CUBE(...) / ROLLUP(...)
+groupingElement
+    : KW_GROUPING KW_SETS LPAREN groupingSet (COMMA groupingSet)* RPAREN
+    | (KW_CUBE | KW_ROLLUP) LPAREN expression (COMMA expression)* RPAREN
+    | expression (alias)?
+    ;
+
+groupingSet
+    : LPAREN (expression (COMMA expression)*)? RPAREN
+    | expression
     ;
 
 havingClause
@@ -189,8 +219,12 @@ frameBound
     ;
 
 pivotClause
-    : KW_PIVOT LPAREN functionName KW_IN columnList (alias)? RPAREN
-    | KW_UNPIVOT LPAREN uid KW_IN columnList RPAREN
+    : KW_PIVOT LPAREN expression (COMMA expression)* KW_FOR uid KW_IN LPAREN pivotValue (COMMA pivotValue)* RPAREN RPAREN (alias)?
+    | KW_UNPIVOT LPAREN uid (COMMA uid)* KW_IN columnList KW_FOR uid KW_IN LPAREN pivotValue (COMMA pivotValue)* RPAREN RPAREN (alias)?
+    ;
+
+pivotValue
+    : (literal | uid | MULT) (KW_AS uid)?
     ;
 
 // ============================================
@@ -213,6 +247,8 @@ columnNameList
 expression
     : expression LBRACKET expression RBRACKET
     | expression DOT uid
+    // first_value(v) IGNORE NULLS OVER (...)：先绑定 IGNORE/RESPECT，再套窗口
+    | expression (KW_IGNORE | KW_RESPECT) KW_NULLS
     | expression KW_OVER LPAREN windowDefinition RPAREN
     | expression KW_NOT? KW_LIKE expression
     | (PLUS | MINUS) expression
@@ -225,6 +261,9 @@ expression
     | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    // INTERVAL '1' DAY / INTERVAL '5' MINUTE
+    | KW_INTERVAL expression timeUnit
+    | KW_EXISTS LPAREN queryExpression RPAREN
     | LPAREN queryExpression RPAREN
     | caseExpression
     | primaryExpression
@@ -285,9 +324,14 @@ typeName
     : KW_INT | KW_BIGINT | KW_SMALLINT | KW_TINYINT
     | KW_DECIMAL | KW_STRING | KW_CHAR | KW_BOOLEAN
     | KW_DATE | KW_TIME | KW_TIMESTAMP
-    | KW_BINARY | KW_VARBINARY
+    | KW_BINARY | KW_VARBINARY | KW_DOUBLE | KW_FLOAT
     | KW_ARRAY | KW_MAP | KW_ROW
     | KW_STRUCT | KW_VARIANT | KW_BYTEARRAY
+    ;
+
+// INTERVAL 与日期函数的时间单位
+timeUnit
+    : KW_SECOND | KW_MINUTE | KW_HOUR | KW_DAY | KW_MONTH | KW_QUARTER | KW_YEAR
     ;
 
 // ============================================
@@ -298,19 +342,19 @@ uid
     : UID
     | QUOTED_UID
     | KW_DEFAULT   // default 数据库名等场景下关键字可作标识符
+    | timeUnit     // day/hour/second 等常作列名，不作保留字
     ;
 
 alias
     : KW_AS? uid
     ;
 
-// 函数名一律走 uid；只有同时充当子句关键字的词（IF/LEFT/RIGHT/FIRST/LAST/LATERAL VIEW）需显式放行
+// 函数名一律走 uid；只有同时充当子句关键字的词（IF/LEFT/RIGHT/FIRST/LAST）需显式放行
 functionName
     : uid
     | KW_IF
     | KW_LEFT
     | KW_RIGHT
-    | KW_LATERAL_VIEW
     | KW_FIRST
     | KW_LAST
     ;
@@ -351,7 +395,7 @@ tableProperties
     ;
 
 tableProperty
-    : uid EQ expression
+    : (uid | STRING) EQ expression
     ;
 
 // ============================================
@@ -411,6 +455,12 @@ setStatement
 
 dropTableStatement
     : KW_DROP KW_TABLE (KW_IF KW_EXISTS)? tablePath
+    ;
+
+// TRUNCATE TABLE x [PARTITION (dt='...')]：只清空数据，不产生血缘
+truncateStatement
+    : KW_TRUNCATE KW_TABLE tablePath
+      (KW_PARTITION LPAREN partitionSpec (COMMA partitionSpec)* RPAREN)?
     ;
 
 // ============================================

@@ -51,10 +51,12 @@ KW_ROWS: [Rr][Oo][Ww][Ss];
 KW_RANGE: [Rr][Aa][Nn][Gg][Ee];
 KW_BETWEEN: [Bb][Ee][Tt][Ww][Ee][Ee][Nn];
 KW_IN: [Ii][Nn];
+KW_FOR: [Ff][Oo][Rr];
 KW_UNION: [Uu][Nn][Ii][Oo][Nn];
 KW_INTERSECT: [Ii][Nn][Tt][Ee][Rr][Ss][Ee][Cc][Tt];
 KW_EXCEPT: [Ee][Xx][Cc][Ee][Pp][Tt] | [Mm][Ii][Nn][Uu][Ss];
 KW_DROP: [Dd][Rr][Oo][Pp];
+KW_TRUNCATE: [Tt][Rr][Uu][Nn][Cc][Aa][Tt][Ee];
 KW_ALTER: [Aa][Ll][Tt][Ee][Rr];
 
 // ============================================
@@ -122,16 +124,46 @@ KW_TIME: [Tt][Ii][Mm][Ee];
 KW_TIMESTAMP: [Tt][Ii][Mm][Ee][Ss][Tt][Aa][Mm][Pp];
 KW_ARRAY: [Aa][Rr][Rr][Aa][Yy];
 KW_MAP: [Mm][Aa][Pp];
+KW_DOUBLE: [Dd][Oo][Uu][Bb][Ll][Ee];
+KW_FLOAT: [Ff][Ll][Oo][Aa][Tt];
 // KW_ROW: 已在第 55 行定义
+
+// ============================================
+// INTERVAL 字面量与时间单位
+// ============================================
+
+KW_INTERVAL: [Ii][Nn][Tt][Ee][Rr][Vv][Aa][Ll];
+KW_SECOND: [Ss][Ee][Cc][Oo][Nn][Dd];
+KW_MINUTE: [Mm][Ii][Nn][Uu][Tt][Ee];
+KW_HOUR: [Hh][Oo][Uu][Rr];
+KW_DAY: [Dd][Aa][Yy];
+KW_MONTH: [Mm][Oo][Nn][Tt][Hh];
+KW_QUARTER: [Qq][Uu][Aa][Rr][Tt][Ee][Rr];
+KW_YEAR: [Yy][Ee][Aa][Rr];
 
 // ============================================
 // TVF (Table-valued Functions) - Spark 特有
 // ============================================
 
-KW_LATERAL_VIEW: [Ll][Aa][Tt][Ee][Rr][Aa][Ll] [Vv][Ii][Ee][Ww];
-// KW_RESPECT: 已在前面定义
-// KW_IGNORE: 已在第 88 行定义
+// LATERAL VIEW 是两个词：ANTLR 词法规则会忽略规则内的空白，
+// 写成 `KW_LATERAL_VIEW: LATERAL VIEW` 实际匹配的是 LATERALVIEW，必须拆成两个 token
+KW_LATERAL: [Ll][Aa][Tt][Ee][Rr][Aa][Ll];
+KW_RESPECT: [Rr][Ee][Ss][Pp][Ee][Cc][Tt];
+KW_IGNORE: [Ii][Gg][Nn][Oo][Rr][Ee];
 KW_NULLS: [Nn][Uu][Ll][Ll][Ss];
+KW_RECURSIVE: [Rr][Ee][Cc][Uu][Rr][Ss][Ii][Vv][Ee];
+KW_QUALIFY: [Qq][Uu][Aa][Ll][Ii][Ff][Yy];
+KW_DIRECTORY: [Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy];
+KW_LOCAL: [Ll][Oo][Cc][Aa][Ll];
+KW_STORED: [Ss][Tt][Oo][Rr][Ee][Dd];
+KW_USING: [Uu][Ss][Ii][Nn][Gg];
+KW_VALUES: [Vv][Aa][Ll][Uu][Ee][Ss];
+KW_GROUPING: [Gg][Rr][Oo][Uu][Pp][Ii][Nn][Gg];
+KW_SETS: [Ss][Ee][Tt][Ss];
+KW_CUBE: [Cc][Uu][Bb][Ee];
+KW_ROLLUP: [Rr][Oo][Ll][Ll][Uu][Pp];
+KW_TABLESAMPLE: [Tt][Aa][Bb][Ll][Ee][Ss][Aa][Mm][Pp][Ll][Ee];
+KW_PERCENT: [Pp][Ee][Rr][Cc][Ee][Nn][Tt];
 // KW_TRUNCATE: 已在第 90 行定义
 // KW_YEAR: 已在第 239 行定义
 // KW_MONTH: 已在第 240 行定义
@@ -160,7 +192,7 @@ KW_OVER: [Oo][Vv][Ee][Rr];
 KW_PARTITIONS: [Pp][Aa][Rr][Tt][Ii][Tt][Ii][Oo][Nn][Ss];
 KW_RENAME: [Rr][Ee][Nn][Aa][Mm][Ee];
 KW_STATISTICS: [Ss][Tt][Aa][Tt][Ii][Ss][Tt][Ii][Cc][Ss];
-KW_STRING: [Ss][Tt][Rr][Ii][Nn][Gg];
+KW_STRING: [Ss][Tt][Rr][Ii][Nn][Gg] | [Vv][Aa][Rr][Cc][Hh][Aa][Rr];
 KW_TEMP: [Tt][Ee][Mm][Pp];
 KW_TO: [Tt][Oo];
 UID: [a-zA-Z_][a-zA-Z0-9_]*;

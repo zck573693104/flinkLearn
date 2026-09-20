@@ -347,4 +347,93 @@ public class FlinkSQLLineageParserTest {
         Assert.assertFalse("时间单位词不得被词法保留", lineage.isParseError());
         Assert.assertEquals(Set.of("ods.s_cal"), lineage.getSourceTables());
     }
+
+    /**
+     * 词法层守护：ANTLR 会忽略词法规则内的空白，多词关键字必须拆成两个 token，
+     * 否则 PRIMARY KEY / CHARACTER VARYING 这类写法永远匹配不上
+     */
+    @Test
+    public void testMultiWordKeywordsAreSplitIntoTwoTokens() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_varchar SELECT CAST(c AS CHARACTER VARYING(20)), CAST(d AS DOUBLE) "
+                        + "FROM ods.s_varchar");
+
+        Assert.assertFalse("CHARACTER VARYING/DOUBLE 必须是可用的类型名", lineage.isParseError());
+        Assert.assertEquals(Set.of("ods.s_varchar"), lineage.getSourceTables());
+    }
+
+    /**
+     * 计算列 + 表级 PRIMARY KEY ... NOT ENFORCED 是 Flink upsert 表的标准写法
+     */
+    @Test
+    public void testComputedColumnAndTableLevelPrimaryKeyDdl() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "CREATE TABLE dwd.t_pk (id INT, name VARCHAR, proc_ts AS PROctime(), "
+                        + "PRIMARY KEY (id) NOT ENFORCED) WITH ('connector' = 'jdbc')");
+
+        Assert.assertFalse("计算列与表级主键应可解析", lineage.isParseError());
+        Assert.assertEquals("CREATE_TABLE", lineage.getProcessType());
+        Assert.assertEquals("dwd.t_pk", lineage.getTargetTable());
+    }
+
+    @Test
+    public void testHivePartitionedDdl() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "CREATE TABLE dwd.t_hive (id INT, dt STRING) "
+                        + "PARTITIONED BY (dt STRING) STORED AS PARQUET "
+                        + "TBLPROPERTIES ('hive.partition-commit-policy' = 'none')");
+
+        Assert.assertFalse("Hive 建表选项应可解析", lineage.isParseError());
+        Assert.assertEquals("dwd.t_hive", lineage.getTargetTable());
+    }
+
+    @Test
+    public void testInsertValuesHasTargetOnly() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_val (id, name) VALUES (1, 'a'), (2, 'b')");
+
+        Assert.assertFalse("INSERT VALUES 应可解析", lineage.isParseError());
+        Assert.assertEquals("dwd.t_val", lineage.getTargetTable());
+        Assert.assertTrue("VALUES 没有上游表", lineage.getSourceTables().isEmpty());
+    }
+
+    @Test
+    public void testSetStatementVariantsProduceNoLineage() {
+        TableLineageExtractor ex = new TableLineageExtractor();
+        for (String sql : List.of("SET table.sql-dialect = hive", "SET 'pipeline.name' = 'my job'")) {
+            TableLineage lineage = ex.extractFromSql(sql);
+            Assert.assertFalse("SET 语句不应产生解析错误: " + sql, lineage.isParseError());
+            Assert.assertTrue("SET 语句不应产生血缘: " + sql,
+                    lineage.getTargetTable() == null || lineage.getTargetTable().isEmpty());
+        }
+    }
+
+    @Test
+    public void testArrayAndRowConstructorsKeepSourceTables() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_ctor SELECT ARRAY[1, 2, 3], ROW(id, name), "
+                        + "CAST(m AS MAP<STRING, ARRAY<INT>>) FROM ods.s_ctor");
+
+        Assert.assertFalse("数组/行构造器应可解析", lineage.isParseError());
+        Assert.assertEquals(Set.of("ods.s_ctor"), lineage.getSourceTables());
+    }
+
+    @Test
+    public void testExistsSubqueryContributesSourceTables() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_exists SELECT * FROM ods.a a WHERE EXISTS "
+                        + "(SELECT 1 FROM ods.b WHERE b.id = a.id)");
+
+        Assert.assertFalse("EXISTS 子查询应可解析", lineage.isParseError());
+        Assert.assertEquals(Set.of("ods.a", "ods.b"), lineage.getSourceTables());
+    }
+
+    @Test
+    public void testTruncateStatementHasNoLineage() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql("TRUNCATE TABLE dwd.t_trunc");
+
+        Assert.assertFalse("TRUNCATE 应可解析", lineage.isParseError());
+        Assert.assertTrue("TRUNCATE 不产生数据流",
+                lineage.getTargetTable() == null || lineage.getTargetTable().isEmpty());
+    }
 }

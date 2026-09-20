@@ -20,6 +20,7 @@ class SparkPrestoDialectLineageTest {
     private void assertSparkLineage(String sql, String target, String... sources) {
         TableLineage lineage = spark.extractFromSql(sql);
         assertNotNull(lineage, "Spark 解析结果不应为 null: " + sql);
+        assertFalse(lineage.isParseError(), "Spark 语法不应产生解析错误: " + sql);
         assertEquals(target, lineage.getTargetTable(), "目标表不匹配: " + sql);
         for (String s : sources) {
             assertTrue(lineage.getSourceTables().contains(s),
@@ -32,6 +33,7 @@ class SparkPrestoDialectLineageTest {
     private void assertPrestoLineage(String sql, String target, String... sources) {
         TableLineage lineage = presto.extractFromSql(sql);
         assertNotNull(lineage, "Presto 解析结果不应为 null: " + sql);
+        assertFalse(lineage.isParseError(), "Presto 语法不应产生解析错误: " + sql);
         assertEquals(target, lineage.getTargetTable(), "目标表不匹配: " + sql);
         for (String s : sources) {
             assertTrue(lineage.getSourceTables().contains(s),
@@ -298,5 +300,141 @@ class SparkPrestoDialectLineageTest {
         TableLineage good = spark.extractFromSql("INSERT INTO dwd.t SELECT * FROM ods.s");
         assertFalse(good.isParseError());
         assertEquals(0.95, good.getConfidence(), 0.001);
+    }
+
+    // ============================================
+    // 本轮语法体检暴露的缺口：逐条锁死，避免再次退化成"假通过"
+    // ============================================
+
+    @Test
+    void sparkRecursiveCteDoesNotLeakCteName() {
+        assertSparkLineage(
+                "WITH RECURSIVE x AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM ods.src_rec WHERE n < 3) "
+                        + "INSERT INTO dwd.t_rec SELECT * FROM x",
+                "dwd.t_rec", "ods.src_rec");
+    }
+
+    @Test
+    void sparkLeftSemiAndAntiJoin() {
+        assertSparkLineage("INSERT INTO dwd.t_semi SELECT b.id FROM ods.a b LEFT SEMI JOIN ods.c ON b.id = c.id",
+                "dwd.t_semi", "ods.a", "ods.c");
+        assertSparkLineage("INSERT INTO dwd.t_anti SELECT b.id FROM ods.a b ANTI JOIN ods.c ON b.id = c.id",
+                "dwd.t_anti", "ods.a", "ods.c");
+    }
+
+    @Test
+    void sparkGroupingSetsCubeRollup() {
+        assertSparkLineage("INSERT INTO dwd.t_gs SELECT a, count(*) FROM ods.s_gs GROUP BY GROUPING SETS ((a), (b), ())",
+                "dwd.t_gs", "ods.s_gs");
+        assertSparkLineage("INSERT INTO dwd.t_cube SELECT a, count(*) FROM ods.s_cube GROUP BY CUBE(a, b)",
+                "dwd.t_cube", "ods.s_cube");
+        assertSparkLineage("INSERT INTO dwd.t_rl SELECT a, count(*) FROM ods.s_rl GROUP BY ROLLUP(a, b)",
+                "dwd.t_rl", "ods.s_rl");
+    }
+
+    @Test
+    void sparkPivotAndTablesample() {
+        assertSparkLineage("INSERT INTO dwd.t_pv SELECT * FROM ods.s_pv PIVOT (count(*) FOR k IN ('a' AS a, 'b' AS b))",
+                "dwd.t_pv", "ods.s_pv");
+        assertSparkLineage("INSERT INTO dwd.t_smp SELECT * FROM ods.s_smp TABLESAMPLE (10 PERCENT)",
+                "dwd.t_smp", "ods.s_smp");
+    }
+
+    @Test
+    void sparkIgnoreNullsWindowAndQualify() {
+        assertSparkLineage("INSERT INTO dwd.t_null SELECT first_value(v) IGNORE NULLS OVER (PARTITION BY id ORDER BY ts) "
+                + "FROM ods.s_null", "dwd.t_null", "ods.s_null");
+        assertSparkLineage("INSERT INTO dwd.t_q SELECT * FROM ods.s_q "
+                + "QUALIFY row_number() OVER (PARTITION BY id ORDER BY ts) = 1", "dwd.t_q", "ods.s_q");
+    }
+
+    @Test
+    void sparkVarcharDoubleFloatIntegerCasts() {
+        assertSparkLineage("INSERT INTO dwd.t_typ SELECT CAST(x AS VARCHAR(20)), CAST(y AS DOUBLE), "
+                + "CAST(z AS FLOAT), CAST(w AS INTEGER), CAST(m AS DECIMAL(10, 2)) FROM ods.s_typ",
+                "dwd.t_typ", "ods.s_typ");
+    }
+
+    @Test
+    void sparkExistsAndNotInSubqueryContributeSourceTables() {
+        assertSparkLineage("INSERT INTO dwd.t_ex SELECT * FROM ods.a WHERE EXISTS (SELECT 1 FROM ods.b WHERE b.id = a.id)",
+                "dwd.t_ex", "ods.a", "ods.b");
+        assertSparkLineage("INSERT INTO dwd.t_ni SELECT * FROM ods.a WHERE id NOT IN (SELECT id FROM ods.b)",
+                "dwd.t_ni", "ods.a", "ods.b");
+    }
+
+    /** INSERT ... DIRECTORY 写的是文件路径，不是表：目标必须为空，否则会冒出幻影表 */
+    @Test
+    void sparkInsertDirectoryHasNoTargetTable() {
+        TableLineage lineage = spark.extractFromSql(
+                "INSERT OVERWRITE DIRECTORY '/tmp/out' STORED AS ORC SELECT * FROM ods.src_dir");
+        assertFalse(lineage.isParseError(), "INSERT DIRECTORY 应可解析");
+        assertTrue(lineage.getTargetTable() == null || lineage.getTargetTable().isEmpty(),
+                "DIRECTORY 路径不应成为目标表: " + lineage.getTargetTable());
+        assertEquals(java.util.Set.of("ods.src_dir"), lineage.getSourceTables());
+    }
+
+    @Test
+    void sparkTruncateAndInsertValues() {
+        TableLineage trunc = spark.extractFromSql("TRUNCATE TABLE dwd.t_trunc PARTITION (dt = '2026-09-20')");
+        assertFalse(trunc.isParseError(), "TRUNCATE 应可解析");
+        assertTrue(trunc.getTargetTable() == null || trunc.getTargetTable().isEmpty(),
+                "TRUNCATE 不产生数据流");
+
+        assertSparkLineage("INSERT INTO dwd.t_val VALUES (1, 'a'), (2, 'b')", "dwd.t_val");
+    }
+
+    @Test
+    void sparkIntervalLiteral() {
+        assertSparkLineage("INSERT INTO dwd.t_int SELECT ts + INTERVAL '1' DAY FROM ods.s_int",
+                "dwd.t_int", "ods.s_int");
+    }
+
+    @Test
+    void prestoRowConstructorAndGenericRowType() {
+        assertPrestoLineage("INSERT INTO dwd.t_row SELECT CAST(ROW(1, 'a') AS ROW(a INTEGER, b VARCHAR)) FROM ods.s_row",
+                "dwd.t_row", "ods.s_row");
+        assertPrestoLineage("INSERT INTO dwd.t_arr SELECT ARRAY[1, 2, 3], m['k'] FROM ods.s_arr",
+                "dwd.t_arr", "ods.s_arr");
+    }
+
+    @Test
+    void prestoExtractAndIntervalAndCharacterVarying() {
+        assertPrestoLineage("INSERT INTO dwd.t_ext SELECT EXTRACT(DAY FROM ts), ts + INTERVAL '1' HOUR FROM ods.s_ext",
+                "dwd.t_ext", "ods.s_ext");
+        assertPrestoLineage("INSERT INTO dwd.t_cv SELECT CAST(c AS CHARACTER VARYING(20)) FROM ods.s_cv",
+                "dwd.t_cv", "ods.s_cv");
+    }
+
+    @Test
+    void prestoUnnestWithOrdinalityAndLeftJoinOnTrue() {
+        assertPrestoLineage("INSERT INTO dwd.t_uo SELECT x.item, x.n FROM ods.src_uo "
+                + "CROSS JOIN UNNEST(src_uo.arr, src_uo.arr2) WITH ORDINALITY AS x(item, n)",
+                "dwd.t_uo", "ods.src_uo");
+        assertPrestoLineage("INSERT INTO dwd.t_ul SELECT * FROM ods.src_ul "
+                + "LEFT JOIN UNNEST(src_ul.arr) AS x(item) ON TRUE",
+                "dwd.t_ul", "ods.src_ul");
+    }
+
+    @Test
+    void prestoTablesampleGroupingSetsAndExists() {
+        assertPrestoLineage("INSERT INTO dwd.t_ts SELECT * FROM ods.s_ts TABLESAMPLE BERNOULLI (10)",
+                "dwd.t_ts", "ods.s_ts");
+        assertPrestoLineage("INSERT INTO dwd.t_pgs SELECT a, count(*) FROM ods.s_pgs GROUP BY GROUPING SETS ((a), ())",
+                "dwd.t_pgs", "ods.s_pgs");
+        assertPrestoLineage("INSERT INTO dwd.t_pex SELECT * FROM ods.a WHERE EXISTS (SELECT 1 FROM ods.b WHERE b.id = a.id)",
+                "dwd.t_pex", "ods.a", "ods.b");
+    }
+
+    /** 词法层守护：LATERAL VIEW 这类多词关键字若写成单个词法规则，会退化成匹配 LATERALVIEW */
+    @Test
+    void sparkLateralViewSpelledAsTwoWordsStillParses() {
+        assertSparkLineage("INSERT INTO dwd.t_lv2 SELECT tag FROM ods.src_lv2 LATERAL VIEW explode(tags) t AS tag",
+                "dwd.t_lv2", "ods.src_lv2");
+        TableLineage joined = spark.extractFromSql(
+                "INSERT INTO dwd.t_lv3 SELECT a.id, t.tag FROM ods.src_a a "
+                        + "JOIN ods.src_b b ON a.id = b.id LATERAL VIEW explode(b.tags) t AS tag");
+        assertFalse(joined.isParseError(), "JOIN 之后接 LATERAL VIEW 应可解析");
+        assertEquals(java.util.Set.of("ods.src_a", "ods.src_b"), joined.getSourceTables());
     }
 }
