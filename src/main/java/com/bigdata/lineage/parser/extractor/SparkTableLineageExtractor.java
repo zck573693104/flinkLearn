@@ -182,13 +182,8 @@ public class SparkTableLineageExtractor {
         
         @Override
         public Void visitTableReference(SparkSqlParser.TableReferenceContext ctx) {
-            // 处理 LATERAL VIEW
-            if (ctx.lateralFunction() != null) {
-                visitLateralFunction(ctx.lateralFunction());
-                return null;
-            }
-            
-            // JOIN 分支：先递归处理左侧表引用
+            // JOIN / LATERAL VIEW 分支：先递归处理左侧表引用
+            // （LATERAL VIEW 展开数组/Map，不产生新的表依赖）
             if (ctx.tableReference() != null) {
                 visit(ctx.tableReference());
             }
@@ -263,17 +258,6 @@ public class SparkTableLineageExtractor {
         }
         
         @Override
-        public Void visitLateralFunction(SparkSqlParser.LateralFunctionContext ctx) {
-            // LATERAL VIEW EXPLODE(...) - 展开数组/Map
-            // 源表是前面的表，不产生新的表依赖
-            if (ctx.columnRef() != null) {
-                String columnName = extractColumnName(ctx.columnRef());
-                // 记录列血缘（可选）
-            }
-            return null;
-        }
-        
-        @Override
         public Void visitFunctionCall(SparkSqlParser.FunctionCallContext ctx) {
             // 检查是否为窗口函数或 TVF
             String funcName = extractFunctionName(ctx);
@@ -298,16 +282,6 @@ public class SparkTableLineageExtractor {
             }
             
             return String.join(".", parts);
-        }
-        
-        /**
-         * 提取列名
-         */
-        private String extractColumnName(SparkSqlParser.ColumnRefContext ctx) {
-            if (ctx == null) {
-                return null;
-            }
-            return ctx.uid().getText();
         }
         
         /**

@@ -124,7 +124,6 @@ KW_CANCEL: [Cc][Aa][Nn][Cc][Ee][Ll];
 KW_KILL: [Kk][Ii][Ll][Ll];
 KW_SHOW: [Ss][Hh][Oo][Ww];
 KW_USE: [Uu][Ss][Ee];
-KW_UNNEST: [Uu][Nn][Nn][Ee][Ss][Tt];
 KW_CASE: [Cc][Aa][Ss][Ee];
 KW_WHEN: [Ww][Hh][Ee][Nn];
 KW_THEN: [Tt][Hh][Ee][Nn];

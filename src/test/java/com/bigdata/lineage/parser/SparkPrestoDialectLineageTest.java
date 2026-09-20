@@ -9,7 +9,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Spark/Presto 方言回归测试 —— 离线数仓语料暴露的语法点：
- * CASE WHEN、空字符串、一元负号、数组下标、IF()、USE、WITH+INSERT、UNNEST
+ * CASE WHEN、空字符串、一元负号、数组下标、IF()、USE、WITH+INSERT、
+ * Spark 的 LATERAL VIEW explode / Presto 的 CROSS JOIN UNNEST（各引擎原生数组展开语法）
  */
 class SparkPrestoDialectLineageTest {
 
@@ -80,10 +81,17 @@ class SparkPrestoDialectLineageTest {
     }
 
     @Test
-    void sparkUnnestInFromClause() {
+    void sparkLateralViewExplode() {
         assertSparkLineage(
-                "INSERT INTO dwd.t_unnest SELECT e FROM ods.src_unnest CROSS JOIN UNNEST(tags) AS e",
-                "dwd.t_unnest", "ods.src_unnest");
+                "INSERT INTO dwd.t_lat SELECT tag FROM ods.src_lat LATERAL VIEW explode(tags) lv AS tag",
+                "dwd.t_lat", "ods.src_lat");
+    }
+
+    @Test
+    void sparkLateralViewOuterPosexplodeTwoAliases() {
+        assertSparkLineage(
+                "INSERT INTO dwd.t_pos SELECT pos, tag FROM ods.src_pos LATERAL VIEW OUTER posexplode(tags) pv AS pos, tag",
+                "dwd.t_pos", "ods.src_pos");
     }
 
     // ============================================

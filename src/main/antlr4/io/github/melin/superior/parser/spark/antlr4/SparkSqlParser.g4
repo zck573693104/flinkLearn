@@ -101,17 +101,12 @@ tableReference
     | LPAREN queryExpression RPAREN (alias)?
     | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
-    | KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
-    | KW_LATERAL_VIEW lateralFunction
-    | tableReference joinType? KW_JOIN KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
+    | tableReference lateralView
     ;
 
-aliasWithColumns
-    : KW_AS? uid LPAREN uid (COMMA uid)* RPAREN
-    ;
-
-lateralFunction
-    : functionName LPAREN columnRef (COMMA uid)* RPAREN
+// Hive/Spark 特有：LATERAL VIEW [OUTER] udf(...) [表别名] AS 列别名[, 列别名...]
+lateralView
+    : KW_LATERAL_VIEW KW_OUTER? functionName LPAREN (expression (COMMA expression)*)? RPAREN uid? KW_AS uid (COMMA uid)*
     ;
 
 joinType
@@ -320,6 +315,7 @@ functionName
     | KW_IF
     | KW_LEFT
     | KW_RIGHT
+    | KW_EXPLODE
     ;
 
 cteName
