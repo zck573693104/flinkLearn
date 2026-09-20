@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -23,21 +25,21 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MultiEngineSQLLineageParser {
     
-    private final FlinkTableLineageExtractor flinkExtractor;
+    private final TableLineageExtractor flinkExtractor;
     private final SparkTableLineageExtractor sparkExtractor;
     private final PrestoTableLineageExtractor prestoExtractor;
     private final boolean enableCache;
-    private final Cache<String, List<TableLineage>> cache = new Cache<>();
+    private final Map<String, List<TableLineage>> cache = new ConcurrentHashMap<>();
     
     public MultiEngineSQLLineageParser() {
-        this.flinkExtractor = new FlinkTableLineageExtractor();
+        this.flinkExtractor = new TableLineageExtractor();
         this.sparkExtractor = new SparkTableLineageExtractor();
         this.prestoExtractor = new PrestoTableLineageExtractor();
         this.enableCache = true;
     }
     
     public MultiEngineSQLLineageParser(boolean enableCache) {
-        this.flinkExtractor = new FlinkTableLineageExtractor();
+        this.flinkExtractor = new TableLineageExtractor();
         this.sparkExtractor = new SparkTableLineageExtractor();
         this.prestoExtractor = new PrestoTableLineageExtractor();
         this.enableCache = enableCache;
@@ -105,26 +107,26 @@ public class MultiEngineSQLLineageParser {
     private TableLineage extractWithAutoDetect(String sql) {
         // 尝试 Flink SQL
         TableLineage flinkResult = tryExtractFlink(sql);
-        if (flinkResult != null && hasSourceTables(flinkResult)) {
+        if (flinkResult != null && hasLineage(flinkResult)) {
             log.debug("识别为 Flink SQL");
             return flinkResult;
         }
         
         // 尝试 Spark SQL
         TableLineage sparkResult = tryExtractSpark(sql);
-        if (sparkResult != null && hasSourceTables(sparkResult)) {
+        if (sparkResult != null && hasLineage(sparkResult)) {
             log.debug("识别为 Spark SQL");
             return sparkResult;
         }
         
         // 尝试 Presto SQL
         TableLineage prestoResult = tryExtractPresto(sql);
-        if (prestoResult != null && hasSourceTables(prestoResult)) {
+        if (prestoResult != null && hasLineage(prestoResult)) {
             log.debug("识别为 Presto SQL");
             return prestoResult;
         }
         
-        // 所有尝试都失败，返回第一个非空结果（即使没有源表）
+        // 所有尝试都失败，返回第一个非空结果（即使没有血缘）
         if (flinkResult != null) return flinkResult;
         if (sparkResult != null) return sparkResult;
         if (prestoResult != null) return prestoResult;
@@ -167,6 +169,15 @@ public class MultiEngineSQLLineageParser {
             log.trace("Presto SQL 解析失败：{}", e.getMessage());
             return null;
         }
+    }
+    
+    /**
+     * 判断是否提取到有效血缘（存在目标表或源表）
+     */
+    private boolean hasLineage(TableLineage lineage) {
+        boolean hasTarget = lineage.getTargetTable() != null && !lineage.getTargetTable().isEmpty();
+        boolean hasSource = lineage.getSourceTables() != null && !lineage.getSourceTables().isEmpty();
+        return hasTarget || hasSource;
     }
     
     /**

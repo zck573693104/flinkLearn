@@ -93,7 +93,7 @@ public class FlinkSQLLineageParserTest {
                      ") " +
                      "INSERT INTO product_summary SELECT product_id, total FROM monthly_sales";
         
-        List<TableLineages> lineages = parser.extractTableLineages(sql);
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
         
         Assert.assertNotNull("Lineages should not be null", lineages);
         Assert.assertTrue("Should have at least one lineage", lineages.size() > 0);

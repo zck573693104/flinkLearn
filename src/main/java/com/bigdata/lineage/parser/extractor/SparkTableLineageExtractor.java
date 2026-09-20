@@ -2,10 +2,10 @@ package com.bigdata.lineage.parser.extractor;
 
 import com.bigdata.lineage.parser.model.TableLineage;
 import org.antlr.v4.runtime.*;
+import org.antlr.v4.runtime.tree.ParseTree;
 import io.github.melin.superior.parser.spark.antlr4.SparkSqlLexer;
 import io.github.melin.superior.parser.spark.antlr4.SparkSqlParser;
-import io.github.melin.superior.parser.spark.antlr4.SparkSqlBaseVisitor;
-import io.github.melin.superior.parser.spark.antlr4.BaseSparkSqlParser;
+import io.github.melin.superior.parser.spark.antlr4.SparkSqlParserBaseVisitor;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -25,7 +25,7 @@ public class SparkTableLineageExtractor {
     public TableLineage extractFromSql(String sql) {
         try {
             // 创建词法分析器
-            CharStream charStream = new AntlrInputStream(new ByteArrayInputStream(sql.getBytes()));
+            CharStream charStream = CharStreams.fromString(sql);
             SparkSqlLexer lexer = new SparkSqlLexer(charStream);
             
             // 创建解析器
@@ -35,20 +35,17 @@ public class SparkTableLineageExtractor {
             // 移除默认错误监听器
             parser.removeErrorListeners();
             
-            // 添加自定义错误处理器
+            // 添加自定义错误处理器（静默收集，不中断解析）
+            final List<String> parseErrors = new ArrayList<>();
             parser.addErrorListener(new BaseErrorListener() {
                 @Override
                 public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-                    // 静默处理错误
+                    parseErrors.add("行 " + line + ":" + charPositionInLine + " " + msg);
                 }
             });
             
-            // 解析 SQL 语句
+            // 解析 SQL 语句（容错模式：存在语法错误时仍使用部分解析结果）
             SparkSqlParser.SqlStatementsContext stmtCtx = parser.sqlStatements();
-            
-            if (parser.hasErrors()) {
-                throw new RuntimeException("SQL 解析失败：" + parser.getErrors());
-            }
             
             // 创建血缘提取访问者
             LineageVisitor visitor = new LineageVisitor(sql);
@@ -75,7 +72,7 @@ public class SparkTableLineageExtractor {
     /**
      * ANTLR4 Visitor 实现 - 遍历 AST 并提取血缘信息
      */
-    private static class LineageVisitor extends SparkSqlBaseVisitor<Void> {
+    private static class LineageVisitor extends SparkSqlParserBaseVisitor<Void> {
         
         private final String originalSql;
         private String targetTable;
@@ -142,7 +139,7 @@ public class SparkTableLineageExtractor {
                 visit(ctx.queryExpression());
             }
             // CREATE VIEW
-            else if (ctx.TEMPORARY() != null && ctx.VIEW() != null && ctx.tablePath() != null && ctx.queryExpression() != null) {
+            else if (ctx.KW_TEMPORARY() != null && ctx.KW_VIEW() != null && ctx.tablePath() != null && ctx.queryExpression() != null) {
                 targetTable = extractTableName(ctx.tablePath());
                 processType = "CREATE_VIEW";
                 
@@ -163,6 +160,11 @@ public class SparkTableLineageExtractor {
             // 访问 FROM 子句以提取表
             if (ctx.fromClause() != null) {
                 visit(ctx.fromClause());
+            }
+            
+            // 访问集合操作（UNION/INTERSECT/EXCEPT）右侧子查询
+            for (SparkSqlParser.QueryExpressionContext childCtx : ctx.queryExpression()) {
+                visit(childCtx);
             }
             
             // 检查窗口函数
@@ -189,29 +191,71 @@ public class SparkTableLineageExtractor {
                 return null;
             }
             
-            // 处理嵌套查询
-            if (ctx.queryExpression() != null) {
-                visit(ctx.queryExpression());
-                return null;
+            // JOIN 分支：先递归处理左侧表引用
+            if (ctx.tableReference() != null) {
+                visit(ctx.tableReference());
             }
             
             // 处理表路径
             if (ctx.tablePath() != null) {
                 String tableName = extractTableName(ctx.tablePath());
-                if (tableName != null && !sourceTables.contains(tableName)) {
+                if (tableName != null) {
                     sourceTables.add(tableName);
                 }
             }
             
-            // 递归处理 JOIN
-            if (ctx.joinType() != null && ctx.tablePath() != null) {
-                String tableName = extractTableName(ctx.tablePath());
-                if (tableName != null && !sourceTables.contains(tableName)) {
-                    sourceTables.add(tableName);
-                }
+            // 处理嵌套子查询
+            if (ctx.queryExpression() != null) {
+                visit(ctx.queryExpression());
             }
             
             return null;
+        }
+        
+        @Override
+        public Void visitUpdateStatement(SparkSqlParser.UpdateStatementContext ctx) {
+            // UPDATE target SET ... WHERE ...：目标表即被更新表
+            if (ctx.tablePath() != null) {
+                targetTable = extractTableName(ctx.tablePath());
+            }
+            processType = "UPDATE";
+            
+            // WHERE 条件中的子查询（如 IN (SELECT ...)）产生源表依赖
+            if (ctx.expression() != null) {
+                collectSubqueryTables(ctx.expression());
+            }
+            return null;
+        }
+        
+        @Override
+        public Void visitDeleteStatement(SparkSqlParser.DeleteStatementContext ctx) {
+            // DELETE FROM target WHERE ...：目标表即被删除表
+            if (ctx.tablePath() != null) {
+                targetTable = extractTableName(ctx.tablePath());
+            }
+            processType = "DELETE";
+            
+            // WHERE 条件中的子查询产生源表依赖
+            if (ctx.expression() != null) {
+                collectSubqueryTables(ctx.expression());
+            }
+            return null;
+        }
+        
+        /**
+         * 递归查找子树中的查询表达式并提取源表（用于 WHERE 子查询）
+         */
+        private void collectSubqueryTables(ParseTree node) {
+            if (node instanceof SparkSqlParser.QueryExpressionContext) {
+                visit((SparkSqlParser.QueryExpressionContext) node);
+                return;
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                ParseTree child = node.getChild(i);
+                if (child != null) {
+                    collectSubqueryTables(child);
+                }
+            }
         }
         
         @Override

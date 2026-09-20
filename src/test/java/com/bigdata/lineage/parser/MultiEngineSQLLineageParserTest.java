@@ -32,7 +32,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("my_table", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("my_table", lineages.get(0).getTargetTable());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
     }
 
@@ -48,7 +48,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("result_table", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("result_table", lineages.get(0).getTargetTable());
         assertEquals(1, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("orders"));
     }
@@ -62,7 +62,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("temp_data", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("temp_data", lineages.get(0).getTargetTable());
         assertTrue(lineages.get(0).getSourceTables().contains("source_table"));
     }
 
@@ -75,7 +75,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("active_users", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("active_users", lineages.get(0).getTargetTable());
         assertTrue(lineages.get(0).getSourceTables().contains("users"));
     }
 
@@ -88,7 +88,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTables().isEmpty());
+        assertTrue(lineages.get(0).getTargetTable() == null);
     }
 
     @Test
@@ -100,7 +100,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTables().isEmpty());
+        assertTrue(lineages.get(0).getTargetTable() == null);
     }
 
     @Test
@@ -112,7 +112,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTables().isEmpty());
+        assertTrue(lineages.get(0).getTargetTable() == null);
     }
 
     // ============================================
@@ -130,7 +130,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("spark_result", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("spark_result", lineages.get(0).getTargetTable());
         assertEquals(1, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("click_log"));
     }
@@ -144,7 +144,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTables().isEmpty());
+        assertTrue(lineages.get(0).getTargetTable() == null);
     }
 
     @Test
@@ -156,8 +156,8 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertEquals(1, lineages.get(0).getTargetTables().size());
-        assertTrue(lineages.get(0).getTargetTables().contains("customer_stats"));
+        assertNotNull(lineages.get(0).getTargetTable());
+        assertTrue("customer_stats".equals(lineages.get(0).getTargetTable()));
     }
 
     @Test
@@ -169,8 +169,8 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertEquals(1, lineages.get(0).getTargetTables().size());
-        assertTrue(lineages.get(0).getTargetTables().contains("logs"));
+        assertNotNull(lineages.get(0).getTargetTable());
+        assertTrue("logs".equals(lineages.get(0).getTargetTable()));
     }
 
     // ============================================
@@ -187,7 +187,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("presto_result", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("presto_result", lineages.get(0).getTargetTable());
         assertEquals(1, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("orders"));
     }
@@ -201,7 +201,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTables().isEmpty());
+        assertTrue(lineages.get(0).getTargetTable() == null);
     }
 
     @Test
@@ -214,8 +214,8 @@ public class MultiEngineSQLLineageParserTest {
         assertEquals(1, lineages.size());
         assertEquals(1, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("processed_t2"));
-        assertEquals(1, lineages.get(0).getTargetTables().size());
-        assertTrue(lineages.get(0).getTargetTables().contains("t1"));
+        assertNotNull(lineages.get(0).getTargetTable());
+        assertTrue("t1".equals(lineages.get(0).getTargetTable()));
     }
 
     @Test
@@ -228,8 +228,8 @@ public class MultiEngineSQLLineageParserTest {
         assertEquals(1, lineages.size());
         assertEquals(1, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("deleted_users"));
-        assertEquals(1, lineages.get(0).getTargetTables().size());
-        assertTrue(lineages.get(0).getTargetTables().contains("active_users"));
+        assertNotNull(lineages.get(0).getTargetTable());
+        assertTrue("active_users".equals(lineages.get(0).getTargetTable()));
     }
 
     // ============================================
@@ -316,7 +316,7 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("result_table", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("result_table", lineages.get(0).getTargetTable());
         assertEquals(2, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("orders"));
         assertTrue(lineages.get(0).getSourceTables().contains("users"));
@@ -334,8 +334,8 @@ public class MultiEngineSQLLineageParserTest {
         List<TableLineage> lineages = parser.extractTableLineages(sql);
 
         assertEquals(1, lineages.size());
-        assertEquals("enriched_data", lineages.get(0).getTargetTables().iterator().next());
-        assertEquals(3, lineages.get(0).getSourceTables().size());
+        assertEquals("enriched_data", lineages.get(0).getTargetTable());
+        assertEquals(2, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("table_a"));
         assertTrue(lineages.get(0).getSourceTables().contains("products"));
     }
@@ -354,7 +354,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertEquals("paimon_catalog.default.users", 
-                     lineages.get(0).getTargetTables().iterator().next());
+                     lineages.get(0).getTargetTable());
         assertEquals(1, lineages.get(0).getSourceTables().size());
         assertTrue(lineages.get(0).getSourceTables().contains("paimon_catalog.default.raw_users"));
     }
@@ -368,7 +368,7 @@ public class MultiEngineSQLLineageParserTest {
 
         assertEquals(1, lineages.size());
         assertTrue(lineages.get(0).getSourceTables().isEmpty());
-        assertTrue(lineages.get(0).getTargetTables().isEmpty());
+        assertTrue(lineages.get(0).getTargetTable() == null);
     }
 
     // ============================================
@@ -387,16 +387,16 @@ public class MultiEngineSQLLineageParserTest {
         assertEquals(3, lineages.size());
         
         // 第一条：t1 <- source1
-        assertEquals("t1", lineages.get(0).getTargetTables().iterator().next());
+        assertEquals("t1", lineages.get(0).getTargetTable());
         assertTrue(lineages.get(0).getSourceTables().contains("source1"));
         
         // 第二条：t2 <- source2
-        assertEquals("t2", lineages.get(1).getTargetTables().iterator().next());
+        assertEquals("t2", lineages.get(1).getTargetTable());
         assertTrue(lineages.get(1).getSourceTables().contains("source2"));
         
         // 第三条：DROP TABLE（无血缘）
         assertTrue(lineages.get(2).getSourceTables().isEmpty());
-        assertTrue(lineages.get(2).getTargetTables().isEmpty());
+        assertTrue(lineages.get(2).getTargetTable() == null);
     }
 
     // ============================================

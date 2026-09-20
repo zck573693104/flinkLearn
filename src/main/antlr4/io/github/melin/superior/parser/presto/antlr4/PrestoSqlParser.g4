@@ -1,6 +1,6 @@
 parser grammar PrestoSqlParser;
 
-// options { }
+options { tokenVocab=PrestoSqlLexer; }
 
 // ============================================
 // 入口规则
@@ -27,7 +27,7 @@ statement
 // ============================================
 
 insertStatement
-    : KW_INSERT (KW_INTO | KW_OVERWRITE)? tablePath 
+    : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath 
       (LPAREN columnNameList RPAREN)? queryExpression
     ;
 
@@ -44,7 +44,7 @@ selectStatement
 // ============================================
 
 cteStatement
-    : KW_WITH cteDefinition+ queryExpression
+    : KW_WITH cteDefinition (COMMA cteDefinition)* queryExpression
     ;
 
 cteDefinition
@@ -59,13 +59,13 @@ cteDefinition
 queryExpression
     : selectClause fromClause? whereClause? groupByClause? havingClause? 
       orderByClause? limitClause? windowClause?
-      (KW_UNION (DISTINCT | ALL)? queryExpression
-       | KW_INTERSECT (DISTINCT | ALL)? queryExpression
-       | KW_EXCEPT (DISTINCT | ALL)? queryExpression)*
+      (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
+       | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
+       | KW_EXCEPT (KW_DISTINCT | KW_ALL)? queryExpression)*
     ;
 
 selectClause
-    : KW_SELECT (DISTINCT | ALL)? columnList
+    : KW_SELECT (KW_DISTINCT | KW_ALL)? columnList
     ;
 
 columnList
@@ -88,15 +88,15 @@ fromClause
 tableReference
     : tablePath (alias)?
     | LPAREN queryExpression RPAREN (alias)?
-    | tableReference joinType? JOIN tablePath (alias)? ON expression
-    | tableReference joinType? JOIN LPAREN queryExpression RPAREN (alias)? ON expression
-    | UNNEST LPAREN expression RPAREN (alias)?
+    | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
+    | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
+    | KW_UNNEST LPAREN expression RPAREN (alias)?
     ;
 
 joinType
-    : KW_LEFT? KW_OUTER?
-    | KW_RIGHT? KW_OUTER?
-    | KW_FULL? KW_OUTER?
+    : KW_LEFT KW_OUTER?
+    | KW_RIGHT KW_OUTER?
+    | KW_FULL KW_OUTER?
     | KW_INNER
     | KW_CROSS
     | KW_NATURAL
@@ -111,7 +111,7 @@ whereClause
     ;
 
 groupByClause
-    : KW_GROUP BY columnList
+    : KW_GROUP KW_BY columnList
     ;
 
 havingClause
@@ -119,11 +119,11 @@ havingClause
     ;
 
 orderByClause
-    : KW_ORDER BY orderByItem (COMMA orderByItem)*
+    : KW_ORDER KW_BY orderByItem (COMMA orderByItem)*
     ;
 
 orderByItem
-    : expression (ASC | DESC)?
+    : expression (KW_ASC | KW_DESC)?
     ;
 
 limitClause
@@ -135,7 +135,7 @@ windowClause
     ;
 
 windowSpecification
-    : uid AS windowName OVER LPAREN windowDefinition RPAREN
+    : uid KW_AS windowName KW_OVER LPAREN windowDefinition RPAREN
     ;
 
 windowDefinition
@@ -143,20 +143,20 @@ windowDefinition
     ;
 
 partitionByClause
-    : KW_PARTITION BY columnList
+    : KW_PARTITION KW_BY columnList
     ;
 
 windowFrame
-    : (ROWS | RANGE) frameBound
-    | (ROWS | RANGE) BETWEEN frameBound AND frameBound
+    : (KW_ROWS | KW_RANGE) frameBound
+    | (KW_ROWS | KW_RANGE) KW_BETWEEN frameBound KW_AND frameBound
     ;
 
 frameBound
-    : UNBOUNDED PRECEDING
-    | UNBOUNDED FOLLOWING
-    | CURRENT ROW
-    | INTEGER_VALUE PRECEDING
-    | INTEGER_VALUE FOLLOWING
+    : KW_UNBOUNDED KW_PRECEDING
+    | KW_UNBOUNDED KW_FOLLOWING
+    | KW_CURRENT KW_ROW
+    | NUMBER KW_PRECEDING
+    | NUMBER KW_FOLLOWING
     ;
 
 // ============================================
@@ -177,14 +177,25 @@ columnNameList
 // ============================================
 
 expression
-    : primaryExpression
+    : expression (PLUS | MINUS | MULT | DIV | MOD) expression
+    | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT) expression
+    | expression KW_AND expression
+    | expression KW_OR expression
+    | KW_NOT expression
+    | expression KW_IS KW_NOT? (KW_NULL | KW_TRUE | KW_FALSE)
+    | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
+    | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
+    | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | primaryExpression
     | functionCall
     | castExpression
     | caseExpression
+    | MULT
     ;
 
 primaryExpression
-    : columnRef
+    : tablePath DOT MULT
+    | columnRef
     | literal
     | LPAREN expression RPAREN
     ;
@@ -195,12 +206,12 @@ columnRef
     ;
 
 functionCall
-    : functionName LPAREN (DISTINCT? expression (COMMA expression)*)? RPAREN
-    | functionName LPAREN DISTINCT? expression (COMMA expression)* RPAREN
+    : functionName LPAREN (KW_DISTINCT? expression (COMMA expression)*)? RPAREN
+    | functionName LPAREN KW_DISTINCT? expression (COMMA expression)* RPAREN
     ;
 
 castExpression
-    : KW_CAST LPAREN expression AS dataType RPAREN
+    : KW_CAST LPAREN expression KW_AS dataType RPAREN
     ;
 
 binaryExpression
@@ -208,17 +219,17 @@ binaryExpression
     ;
 
 betweenExpression
-    : expression KW_NOT? BETWEEN expression AND expression
+    : expression KW_NOT? KW_BETWEEN expression KW_AND expression
     ;
 
 inExpression
-    : expression (KW_NOT? IN LPAREN expression (COMMA expression)* RPAREN 
+    : expression (KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN 
                  | LPAREN queryExpression RPAREN)
     ;
 
 caseExpression
     : KW_CASE expression? whenClause+ (KW_ELSE elseClause)? KW_END
-    | KW_CASE KW_WHEN condition THEN result (KW_WHEN condition THEN result)+ (KW_ELSE elseClause)? KW_END
+    | KW_CASE KW_WHEN condition KW_THEN result (KW_WHEN condition KW_THEN result)+ (KW_ELSE elseClause)? KW_END
     ;
 
 whenClause
@@ -260,9 +271,9 @@ literal
 dataType
     : typeName
     | typeName LPAREN NUMBER (COMMA NUMBER)? RPAREN
-    | ARRAY LT dataType GT
-    | MAP LT dataType COMMA dataType GT
-    | ROW LT rowType GT
+    | KW_ARRAY LT dataType GT
+    | KW_MAP LT dataType COMMA dataType GT
+    | KW_ROW LT rowType GT
     ;
 
 rowType
@@ -290,6 +301,7 @@ uid
     : UID
     | QUOTED_UID
     | DOUBLE_QUOTED_ID
+    | KW_DEFAULT   // default 数据库名等场景下关键字可作标识符
     ;
 
 alias
@@ -313,10 +325,10 @@ windowName
 // ============================================
 
 createTableStatement
-    : KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath 
+    : KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath 
       LPAREN columnDefinition (COMMA columnDefinition)* RPAREN tableProperties?
-    | KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath AS queryExpression
-    | KW_CREATE (TEMPORARY | TEMP)? VIEW (IF NOT EXISTS)? tablePath AS queryExpression
+    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
+    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_VIEW (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
     ;
 
 columnDefinition
@@ -324,8 +336,8 @@ columnDefinition
     ;
 
 columnConstraint
-    : KW_PRIMARY KEY
-    | KW_NOT NULL
+    : KW_PRIMARY KW_KEY
+    | KW_NOT KW_NULL
     | KW_NULL
     | KW_DEFAULT expression
     | KW_COMMENT STRING
@@ -344,7 +356,7 @@ tableProperty
 // ============================================
 
 explainStatement
-    : KW_EXPLAIN (ANALYZE | COST | DISTRIBUTION)? statementType
+    : KW_EXPLAIN (KW_ANALYZE | KW_COST | KW_DISTRIBUTION)? statementType
     ;
 
 // ============================================
@@ -352,7 +364,7 @@ explainStatement
 // ============================================
 
 dropTableStatement
-    : KW_DROP TABLE (IF EXISTS)? tablePath
+    : KW_DROP KW_TABLE (KW_IF KW_EXISTS)? tablePath
     ;
 
 // ============================================
@@ -360,14 +372,14 @@ dropTableStatement
 // ============================================
 
 alterTableStatement
-    : KW_ALTER TABLE tablePath alterTableClause
+    : KW_ALTER KW_TABLE tablePath alterTableClause
     ;
 
 alterTableClause
-    : RENAME TO tablePath
-    | ADD COLUMN columnDefinition
-    | DROP COLUMN uid
-    | SET tableProperties
+    : KW_RENAME KW_TO tablePath
+    | KW_ADD KW_COLUMN columnDefinition
+    | KW_DROP KW_COLUMN uid
+    | KW_SET tableProperties
     ;
 
 // ============================================
@@ -376,7 +388,7 @@ alterTableClause
 
 updateStatement
     : KW_UPDATE tablePath (KW_AS alias)?
-      SET assignmentList
+      KW_SET assignmentList
       (KW_WHERE condition)?
     ;
 
@@ -393,7 +405,7 @@ assignment
 // ============================================
 
 deleteStatement
-    : KW_DELETE FROM tablePath (KW_AS alias)?
+    : KW_DELETE KW_FROM tablePath (KW_AS alias)?
       (KW_WHERE condition)?
     ;
 

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -78,7 +79,7 @@ public class FlinkSQLLineageParser {
             
             // 缓存结果
             if (useCache && enableCache && !lineages.isEmpty()) {
-                cache.put(cacheKey, lineages);
+                cache.put(sql.trim().toLowerCase(), lineages);
             }
             
             return lineages;

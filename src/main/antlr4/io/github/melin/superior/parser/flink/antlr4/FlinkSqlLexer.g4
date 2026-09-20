@@ -4,98 +4,111 @@ lexer grammar FlinkSqlLexer;
 // 关键字定义
 // ============================================
 
-KW_INSERT: 'INSERT';
-KW_INTO: 'INTO';
-KW_OVERWRITE: 'OVERWRITE';
-KW_SELECT: 'SELECT';
-KW_FROM: 'FROM';
-KW_JOIN: 'JOIN';
-KW_LEFT: 'LEFT';
-KW_RIGHT: 'RIGHT';
-KW_FULL: 'FULL';
-KW_INNER: 'INNER';
-KW_OUTER: 'OUTER';
-KW_ON: 'ON';
-KW_WHERE: 'WHERE';
-KW_GROUP: 'GROUP';
-KW_BY: 'BY';
-KW_HAVING: 'HAVING';
-KW_ORDER: 'ORDER';
-KW_LIMIT: 'LIMIT';
-KW_AS: 'AS';
-KW_WITH: 'WITH';
-KW_CREATE: 'CREATE';
-KW_TABLE: 'TABLE';
-KW_VIEW: 'VIEW';
-KW_CAST: 'CAST';
-KW_FUNCTION: 'FUNCTION';
-KW_WINDOW: 'WINDOW';
-KW_DISTINCT: 'DISTINCT';
-KW_ALL: 'ALL';
-KW_TRUE: 'TRUE';
-KW_FALSE: 'FALSE';
-KW_NULL: 'NULL';
-KW_NOT: 'NOT';
-KW_AND: 'AND';
-KW_OR: 'OR';
-KW_IS: 'IS';
-KW_FOR: 'FOR';
-KW_PARTITION: 'PARTITION';
-KW_PRIMARY: 'PRIMARY';
-KW_KEY: 'KEY';
-KW_CONSTRAINT: 'CONSTRAINT';
-KW_UNIQUE: 'UNIQUE';
-KW_REFERENCES: 'REFERENCES';
-KW_DEFAULT: 'DEFAULT';
-KW_COMMENT: 'COMMENT';
-KW_PRIMARY_KEY: 'PRIMARY KEY';
-KW_UNBOUNDED: 'UNBOUNDED';
-KW_PRECEDING: 'PRECEDING';
-KW_FOLLOWING: 'FOLLOWING';
-KW_CURRENT: 'CURRENT';
-KW_ROW: 'ROW';
-KW_ROWS: 'ROWS';
-KW_RANGE: 'RANGE';
-KW_BETWEEN: 'BETWEEN';
-KW_IN: 'IN';
-KW_UNION: 'UNION';
-KW_INTERSECT: 'INTERSECT';
-KW_EXCEPT: 'EXCEPT' | 'MINUS';
-KW_DROP: 'DROP';
-KW_ALTER: 'ALTER';
+KW_INSERT: [Ii][Nn][Ss][Ee][Rr][Tt];
+KW_INTO: [Ii][Nn][Tt][Oo];
+KW_OVERWRITE: [Oo][Vv][Ee][Rr][Ww][Rr][Ii][Tt][Ee];
+KW_SELECT: [Ss][Ee][Ll][Ee][Cc][Tt];
+KW_FROM: [Ff][Rr][Oo][Mm];
+KW_JOIN: [Jj][Oo][Ii][Nn];
+KW_LEFT: [Ll][Ee][Ff][Tt];
+KW_RIGHT: [Rr][Ii][Gg][Hh][Tt];
+KW_FULL: [Ff][Uu][Ll][Ll];
+KW_INNER: [Ii][Nn][Nn][Ee][Rr];
+KW_OUTER: [Oo][Uu][Tt][Ee][Rr];
+KW_ON: [Oo][Nn];
+KW_WHERE: [Ww][Hh][Ee][Rr][Ee];
+KW_GROUP: [Gg][Rr][Oo][Uu][Pp];
+KW_BY: [Bb][Yy];
+KW_HAVING: [Hh][Aa][Vv][Ii][Nn][Gg];
+KW_ORDER: [Oo][Rr][Dd][Ee][Rr];
+KW_LIMIT: [Ll][Ii][Mm][Ii][Tt];
+KW_AS: [Aa][Ss];
+KW_WITH: [Ww][Ii][Tt][Hh];
+KW_CREATE: [Cc][Rr][Ee][Aa][Tt][Ee];
+KW_TABLE: [Tt][Aa][Bb][Ll][Ee];
+KW_VIEW: [Vv][Ii][Ee][Ww];
+KW_CAST: [Cc][Aa][Ss][Tt];
+KW_FUNCTION: [Ff][Uu][Nn][Cc][Tt][Ii][Oo][Nn];
+KW_WINDOW: [Ww][Ii][Nn][Dd][Oo][Ww];
+KW_DISTINCT: [Dd][Ii][Ss][Tt][Ii][Nn][Cc][Tt];
+KW_ALL: [Aa][Ll][Ll];
+KW_TRUE: [Tt][Rr][Uu][Ee];
+KW_FALSE: [Ff][Aa][Ll][Ss][Ee];
+KW_NULL: [Nn][Uu][Ll][Ll];
+KW_NOT: [Nn][Oo][Tt];
+KW_AND: [Aa][Nn][Dd];
+KW_OR: [Oo][Rr];
+KW_IS: [Ii][Ss];
+KW_FOR: [Ff][Oo][Rr];
+KW_PARTITION: [Pp][Aa][Rr][Tt][Ii][Tt][Ii][Oo][Nn];
+KW_PRIMARY: [Pp][Rr][Ii][Mm][Aa][Rr][Yy];
+KW_KEY: [Kk][Ee][Yy];
+KW_CONSTRAINT: [Cc][Oo][Nn][Ss][Tt][Rr][Aa][Ii][Nn][Tt];
+KW_UNIQUE: [Uu][Nn][Ii][Qq][Uu][Ee];
+KW_REFERENCES: [Rr][Ee][Ff][Ee][Rr][Ee][Nn][Cc][Ee][Ss];
+KW_DEFAULT: [Dd][Ee][Ff][Aa][Uu][Ll][Tt];
+KW_COMMENT: [Cc][Oo][Mm][Mm][Ee][Nn][Tt];
+KW_PRIMARY_KEY: [Pp][Rr][Ii][Mm][Aa][Rr][Yy] [Kk][Ee][Yy];
+KW_UNBOUNDED: [Uu][Nn][Bb][Oo][Uu][Nn][Dd][Ee][Dd];
+KW_PRECEDING: [Pp][Rr][Ee][Cc][Ee][Dd][Ii][Nn][Gg];
+KW_FOLLOWING: [Ff][Oo][Ll][Ll][Oo][Ww][Ii][Nn][Gg];
+KW_CURRENT: [Cc][Uu][Rr][Rr][Ee][Nn][Tt];
+KW_ROW: [Rr][Oo][Ww];
+KW_ROWS: [Rr][Oo][Ww][Ss];
+KW_RANGE: [Rr][Aa][Nn][Gg][Ee];
+KW_BETWEEN: [Bb][Ee][Tt][Ww][Ee][Ee][Nn];
+KW_IN: [Ii][Nn];
+KW_UNION: [Uu][Nn][Ii][Oo][Nn];
+KW_INTERSECT: [Ii][Nn][Tt][Ee][Rr][Ss][Ee][Cc][Tt];
+KW_EXCEPT: [Ee][Xx][Cc][Ee][Pp][Tt] | [Mm][Ii][Nn][Uu][Ss];
+KW_DROP: [Dd][Rr][Oo][Pp];
+KW_ALTER: [Aa][Ll][Tt][Ee][Rr];
+KW_CROSS: [Cc][Rr][Oo][Ss][Ss];
+KW_ASC: [Aa][Ss][Cc];
+KW_DESC: [Dd][Ee][Ss][Cc];
+KW_OVER: [Oo][Vv][Ee][Rr];
+KW_TEMPORARY: [Tt][Ee][Mm][Pp][Oo][Rr][Aa][Rr][Yy];
+KW_TEMP: [Tt][Ee][Mm][Pp];
+KW_IF: [Ii][Ff];
+KW_EXISTS: [Ee][Xx][Ii][Ss][Tt][Ss];
+KW_RENAME: [Rr][Ee][Nn][Aa][Mm][Ee];
+KW_TO: [Tt][Oo];
+KW_ADD: [Aa][Dd][Dd];
+KW_COLUMN: [Cc][Oo][Ll][Uu][Mm][Nn];
+KW_SET: [Ss][Ee][Tt];
 
 // ============================================
 // 数据类型关键字
 // ============================================
 
-KW_INT: 'INT' | 'INTEGER';
-KW_BIGINT: 'BIGINT';
-KW_SMALLINT: 'SMALLINT';
-KW_TINYINT: 'TINYINT';
-KW_DECIMAL: 'DECIMAL' | 'NUMERIC';
-KW_STRING: 'STRING' | 'VARCHAR' | 'CHARACTER VARYING';
-KW_CHAR: 'CHARACTER' | 'CHAR';
-KW_BOOLEAN: 'BOOLEAN' | 'BOOL';
-KW_DATE: 'DATE';
-KW_TIME: 'TIME';
-KW_TIMESTAMP: 'TIMESTAMP';
-KW_BINARY: 'BINARY';
-KW_VARBINARY: 'VARBINARY';
-KW_ARRAY: 'ARRAY';
-KW_MAP: 'MAP';
+KW_INT: [Ii][Nn][Tt] | [Ii][Nn][Tt][Ee][Gg][Ee][Rr];
+KW_BIGINT: [Bb][Ii][Gg][Ii][Nn][Tt];
+KW_SMALLINT: [Ss][Mm][Aa][Ll][Ll][Ii][Nn][Tt];
+KW_TINYINT: [Tt][Ii][Nn][Yy][Ii][Nn][Tt];
+KW_DECIMAL: [Dd][Ee][Cc][Ii][Mm][Aa][Ll] | [Nn][Uu][Mm][Ee][Rr][Ii][Cc];
+KW_STRING: [Ss][Tt][Rr][Ii][Nn][Gg] | [Vv][Aa][Rr][Cc][Hh][Aa][Rr] | [Cc][Hh][Aa][Rr][Aa][Cc][Tt][Ee][Rr] [Vv][Aa][Rr][Yy][Ii][Nn][Gg];
+KW_CHAR: [Cc][Hh][Aa][Rr][Aa][Cc][Tt][Ee][Rr] | [Cc][Hh][Aa][Rr];
+KW_BOOLEAN: [Bb][Oo][Oo][Ll][Ee][Aa][Nn] | [Bb][Oo][Oo][Ll];
+KW_DATE: [Dd][Aa][Tt][Ee];
+KW_TIME: [Tt][Ii][Mm][Ee];
+KW_TIMESTAMP: [Tt][Ii][Mm][Ee][Ss][Tt][Aa][Mm][Pp];
+KW_BINARY: [Bb][Ii][Nn][Aa][Rr][Yy];
+KW_VARBINARY: [Vv][Aa][Rr][Bb][Ii][Nn][Aa][Rr][Yy];
+KW_ARRAY: [Aa][Rr][Rr][Aa][Yy];
+KW_MAP: [Mm][Aa][Pp];
 // KW_ROW: 已在第 56 行定义
-KW_ANY: 'ANY';
+KW_ANY: [Aa][Nn][Yy];
 
 // ============================================
 // TVF (Table-valued Functions) - Flink 特有
 // ============================================
 
-KW_TUMBLE: 'TUMBLE';
-KW_HOP: 'HOP';
-KW_SESSION: 'SESSION';
-KW_CUMULATE: 'CUMULATE';
-KW_FLOOR: 'FLOOR';
-KW_TRIGGER: 'TRIGGER';
+KW_TUMBLE: [Tt][Uu][Mm][Bb][Ll][Ee];
+KW_HOP: [Hh][Oo][Pp];
+KW_SESSION: [Ss][Ee][Ss][Ss][Ii][Oo][Nn];
+KW_CUMULATE: [Cc][Uu][Mm][Uu][Ll][Aa][Tt][Ee];
+KW_FLOOR: [Ff][Ll][Oo][Oo][Rr];
+KW_TRIGGER: [Tt][Rr][Ii][Gg][Gg][Ee][Rr];
 
 // ============================================
 // 函数关键字
@@ -104,8 +117,8 @@ KW_TRIGGER: 'TRIGGER';
 KW_CURRENT_TIMESTAMP: 'CURRENT_TIMESTAMP';
 KW_CURRENT_DATE: 'CURRENT_DATE';
 KW_CURRENT_TIME: 'CURRENT_TIME';
-KW_LOCALTIME: 'LOCALTIME';
-KW_LOCALTIMESTAMP: 'LOCALTIMESTAMP';
+KW_LOCALTIME: [Ll][Oo][Cc][Aa][Ll][Tt][Ii][Mm][Ee];
+KW_LOCALTIMESTAMP: [Ll][Oo][Cc][Aa][Ll][Tt][Ii][Mm][Ee][Ss][Tt][Aa][Mm][Pp];
 
 // ============================================
 // 标识符
@@ -113,6 +126,7 @@ KW_LOCALTIMESTAMP: 'LOCALTIMESTAMP';
 
 UID: [a-zA-Z_][a-zA-Z0-9_]*;
 QUOTED_UID: '`' (~[`])+ '`';
+DOUBLE_QUOTED_STRING: '"' (~["])+ '"';
 
 // ============================================
 // 字符串和数字

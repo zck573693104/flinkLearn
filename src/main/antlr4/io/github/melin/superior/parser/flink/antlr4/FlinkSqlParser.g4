@@ -1,6 +1,6 @@
 parser grammar FlinkSqlParser;
 
-// options { }
+options { tokenVocab=FlinkSqlLexer; }
 
 // ============================================
 // 入口规则
@@ -24,7 +24,7 @@ statement
 // ============================================
 
 insertStatement
-    : KW_INSERT (KW_INTO | KW_OVERWRITE)? tablePath 
+    : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath 
       (LPAREN columnNameList RPAREN)? queryExpression
     ;
 
@@ -41,7 +41,7 @@ selectStatement
 // ============================================
 
 cteStatement
-    : KW_WITH cteDefinition+ queryExpression
+    : KW_WITH cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
     ;
 
 cteDefinition
@@ -55,13 +55,13 @@ cteDefinition
 
 queryExpression
     : selectClause fromClause? whereClause? groupByClause? havingClause? orderByClause? limitClause?
-      (KW_UNION (DISTINCT | ALL)? queryExpression
-       | KW_INTERSECT (DISTINCT | ALL)? queryExpression
-       | KW_EXCEPT (DISTINCT | ALL)? queryExpression)*
+      (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
+       | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
+       | KW_EXCEPT (KW_DISTINCT | KW_ALL)? queryExpression)*
     ;
 
 selectClause
-    : KW_SELECT (DISTINCT | ALL)? columnList
+    : KW_SELECT (KW_DISTINCT | KW_ALL)? columnList
     ;
 
 columnList
@@ -69,7 +69,7 @@ columnList
     ;
 
 columnDef
-    : STAR
+    : MULT
     | expression (alias)?
     ;
 
@@ -88,8 +88,8 @@ fromClause
 tableReference
     : tablePath (alias)?
     | LPAREN queryExpression RPAREN (alias)?
-    | tableReference joinType? JOIN tablePath (alias)? ON expression
-    | tableReference joinType? JOIN LPAREN queryExpression RPAREN (alias)? ON expression
+    | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
+    | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
     ;
 
 // ============================================
@@ -97,9 +97,9 @@ tableReference
 // ============================================
 
 joinType
-    : KW_LEFT? KW_OUTER?
-    | KW_RIGHT? KW_OUTER?
-    | KW_FULL? KW_OUTER?
+    : KW_LEFT KW_OUTER?
+    | KW_RIGHT KW_OUTER?
+    | KW_FULL KW_OUTER?
     | KW_INNER
     | KW_CROSS
     ;
@@ -113,7 +113,7 @@ whereClause
     ;
 
 groupByClause
-    : KW_GROUP BY columnList
+    : KW_GROUP KW_BY columnList
     ;
 
 havingClause
@@ -121,11 +121,11 @@ havingClause
     ;
 
 orderByClause
-    : KW_ORDER BY orderByItem (COMMA orderByItem)*
+    : KW_ORDER KW_BY orderByItem (COMMA orderByItem)*
     ;
 
 orderByItem
-    : expression (ASC | DESC)?
+    : expression (KW_ASC | KW_DESC)?
     ;
 
 limitClause
@@ -150,13 +150,24 @@ columnNameList
 // ============================================
 
 expression
-    : primaryExpression
+    : expression (PLUS | MINUS | MULT | DIV | MOD) expression
+    | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT) expression
+    | expression KW_AND expression
+    | expression KW_OR expression
+    | KW_NOT expression
+    | expression KW_IS KW_NOT? (KW_NULL | KW_TRUE | KW_FALSE)
+    | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
+    | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
+    | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | primaryExpression
     | functionCall
     | castExpression
+    | MULT
     ;
 
 primaryExpression
-    : columnRef
+    : tablePath DOT MULT
+    | columnRef
     | literal
     | LPAREN expression RPAREN
     ;
@@ -167,12 +178,12 @@ columnRef
     ;
 
 functionCall
-    : functionName LPAREN (DISTINCT? expression (COMMA expression)*)? RPAREN
-    | functionName LPAREN DISTINCT? expression (COMMA expression)* RPAREN
+    : functionName LPAREN (KW_DISTINCT? expression (COMMA expression)*)? RPAREN
+    | functionName LPAREN KW_DISTINCT? expression (COMMA expression)* RPAREN
     ;
 
 castExpression
-    : KW_CAST LPAREN expression AS dataType RPAREN
+    : KW_CAST LPAREN expression KW_AS dataType RPAREN
     ;
 
 binaryExpression
@@ -181,12 +192,12 @@ binaryExpression
 
 // BETWEEN 表达式
 betweenExpression
-    : expression KW_NOT? BETWEEN expression AND expression
+    : expression KW_NOT? KW_BETWEEN expression KW_AND expression
     ;
 
 // IN 表达式
 inExpression
-    : expression (KW_NOT? IN LPAREN expression (COMMA expression)* RPAREN 
+    : expression (KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN 
                  | LPAREN queryExpression RPAREN)
     ;
 
@@ -227,6 +238,7 @@ typeName
 uid
     : UID
     | QUOTED_UID
+    | KW_DEFAULT   // default 数据库名等场景下关键字可作标识符
     ;
 
 alias
@@ -252,7 +264,7 @@ tvfFunction
 
 // 窗口定义（用于 ROW_NUMBER, RANK 等窗口函数）
 windowSpecification
-    : uid OVER LPAREN windowDefinition RPAREN
+    : uid KW_OVER LPAREN windowDefinition RPAREN
     ;
 
 windowDefinition
@@ -260,20 +272,20 @@ windowDefinition
     ;
 
 partitionByClause
-    : KW_PARTITION BY columnList
+    : KW_PARTITION KW_BY columnList
     ;
 
 windowFrame
-    : (ROWS | RANGE) frameBound
-    | (ROWS | RANGE) BETWEEN frameBound AND frameBound
+    : (KW_ROWS | KW_RANGE) frameBound
+    | (KW_ROWS | KW_RANGE) KW_BETWEEN frameBound KW_AND frameBound
     ;
 
 frameBound
-    : UNBOUNDED PRECEDING
-    | UNBOUNDED FOLLOWING
-    | CURRENT ROW
-    | INTEGER_VALUE PRECEDING
-    | INTEGER_VALUE FOLLOWING
+    : KW_UNBOUNDED KW_PRECEDING
+    | KW_UNBOUNDED KW_FOLLOWING
+    | KW_CURRENT KW_ROW
+    | NUMBER KW_PRECEDING
+    | NUMBER KW_FOLLOWING
     ;
 
 // ============================================
@@ -281,10 +293,10 @@ frameBound
 // ============================================
 
 createTableStatement
-    : KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath 
+    : KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath 
       LPAREN columnDefinition (COMMA columnDefinition)* RPAREN tableProperties?
-    | KW_CREATE (TEMPORARY | TEMP)? TABLE (IF NOT EXISTS)? tablePath AS queryExpression
-    | KW_CREATE (TEMPORARY | TEMP)? VIEW (IF NOT EXISTS)? tablePath AS queryExpression
+    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
+    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_VIEW (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
     ;
 
 columnDefinition
@@ -292,8 +304,9 @@ columnDefinition
     ;
 
 columnConstraint
-    : KW_PRIMARY KEY
-    | KW_NOT NULL
+    : KW_PRIMARY_KEY
+    | KW_PRIMARY KW_KEY
+    | KW_NOT KW_NULL
     | KW_NULL
     | KW_DEFAULT expression
     | KW_COMMENT STRING
@@ -304,7 +317,7 @@ tableProperties
     ;
 
 tableProperty
-    : uid EQ expression
+    : (uid | STRING) EQ expression
     ;
 
 // ============================================
@@ -312,7 +325,7 @@ tableProperty
 // ============================================
 
 dropTableStatement
-    : KW_DROP TABLE (IF EXISTS)? tablePath
+    : KW_DROP KW_TABLE (KW_IF KW_EXISTS)? tablePath
     ;
 
 // ============================================
@@ -320,12 +333,12 @@ dropTableStatement
 // ============================================
 
 alterTableStatement
-    : KW_ALTER TABLE tablePath alterTableClause
+    : KW_ALTER KW_TABLE tablePath alterTableClause
     ;
 
 alterTableClause
-    : RENAME TO tablePath
-    | ADD COLUMN columnDefinition
-    | DROP COLUMN uid
-    | SET tableProperties
+    : KW_RENAME KW_TO tablePath
+    | KW_ADD KW_COLUMN columnDefinition
+    | KW_DROP KW_COLUMN uid
+    | KW_SET tableProperties
     ;

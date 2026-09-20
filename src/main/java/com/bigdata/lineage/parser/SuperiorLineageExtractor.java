@@ -5,6 +5,7 @@ import io.github.melin.superior.common.relational.Statement;
 import io.github.melin.superior.common.relational.dml.QueryStmt;
 import io.github.melin.superior.common.relational.dml.InsertTable;
 import io.github.melin.superior.common.relational.TableId;
+import io.github.melin.superior.common.relational.table.ColumnRel;
 import com.bigdata.lineage.model.*;
 import lombok.extern.slf4j.Slf4j;
 
@@ -82,11 +83,11 @@ public class SuperiorLineageExtractor {
             for (Statement stmt : statements) {
                 if (stmt instanceof InsertTable) {
                     InsertTable insertStmt = (InsertTable) stmt;
-                    QueryStmt queryStmt = insertStmt.queryStmt;
+                    QueryStmt queryStmt = insertStmt.getQueryStmt();
                     
                     // 获取源表和目标表
-                    List<TableId> inputTables = queryStmt.inputTables;
-                    List<TableId> outputTables = insertStmt.outputTables;
+                    List<TableId> inputTables = queryStmt.getInputTables();
+                    List<TableId> outputTables = insertStmt.getOutputTables();
                     
                     if (!inputTables.isEmpty() && !outputTables.isEmpty()) {
                         // TODO: 深入分析 SELECT 子句的列映射
@@ -97,15 +98,15 @@ public class SuperiorLineageExtractor {
                         String sourceTable = inputTables.get(0).getFullTableName();
                         
                         // 如果有列定义，可以建立更精确的映射
-                        if (insertStmt.columnRels != null && insertStmt.columnRels.size() > 0) {
-                            for (int i = 0; i < insertStmt.columnRels.size(); i++) {
-                                ColumnRel targetCol = insertStmt.columnRels.get(i);
+                        if (insertStmt.getColumnRels() != null && insertStmt.getColumnRels().size() > 0) {
+                            for (int i = 0; i < insertStmt.getColumnRels().size(); i++) {
+                                ColumnRel targetCol = insertStmt.getColumnRels().get(i);
                                 
                                 ColumnLineageResult result = ColumnLineageResult.builder()
                                     .sourceTable(sourceTable)
-                                    .sourceColumn(targetCol.getName())
+                                    .sourceColumn(targetCol.getColumnName())
                                     .targetTable(targetTable)
-                                    .targetColumn(targetCol.getName())
+                                    .targetColumn(targetCol.getColumnName())
                                     .transformation("direct_mapping")
                                     .confidence(CONFIDENCE)
                                     .build();
@@ -156,15 +157,15 @@ public class SuperiorLineageExtractor {
      * 转换 INSERT 语句为表级血缘
      */
     private TableLineageResult convertInsertStatement(InsertTable insertStmt) {
-        QueryStmt queryStmt = insertStmt.queryStmt;
+        QueryStmt queryStmt = insertStmt.getQueryStmt();
         
         // 提取源表（排除目标表）
-        Set<String> sourceTables = queryStmt.inputTables.stream()
+        Set<String> sourceTables = queryStmt.getInputTables().stream()
             .map(TableId::getFullTableName)
             .collect(Collectors.toSet());
         
         // 提取目标表
-        String targetTable = insertStmt.outputTables.stream()
+        String targetTable = insertStmt.getOutputTables().stream()
             .map(TableId::getFullTableName)
             .findFirst()
             .orElse(null);
@@ -187,7 +188,7 @@ public class SuperiorLineageExtractor {
      * 转换 SELECT 语句为表级血缘
      */
     private TableLineageResult convertQueryStatement(QueryStmt queryStmt) {
-        Set<String> sourceTables = queryStmt.inputTables.stream()
+        Set<String> sourceTables = queryStmt.getInputTables().stream()
             .map(TableId::getFullTableName)
             .collect(Collectors.toSet());
         

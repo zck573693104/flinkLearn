@@ -113,10 +113,10 @@ public class ColumnLineageExtractor {
         for (int i = 0; i < columnRels.size(); i++) {
             ColumnRel col = columnRels.get(i);
             
-            ColumnLineage.Builder builder = ColumnLineage.builder()
+            var builder = ColumnLineage.builder()
                 .sourceTable(sourceTable)
                 .targetTable(targetTable)
-                .targetColumn(col.getName())
+                .targetColumn(col.getColumnName())
                 .confidence(DIRECT_MAPPING_CONFIDENCE);
             
             // 分析源列
@@ -146,7 +146,7 @@ public class ColumnLineageExtractor {
         }
         
         // 普通列，假设与目标列同名
-        return col.getName();
+        return col.getColumnName();
     }
     
     /**

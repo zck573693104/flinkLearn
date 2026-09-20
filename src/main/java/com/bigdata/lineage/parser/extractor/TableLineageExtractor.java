@@ -4,8 +4,7 @@ import com.bigdata.lineage.parser.model.TableLineage;
 import org.antlr.v4.runtime.*;
 import io.github.melin.superior.parser.flink.antlr4.FlinkSqlLexer;
 import io.github.melin.superior.parser.flink.antlr4.FlinkSqlParser;
-import io.github.melin.superior.parser.flink.antlr4.FlinkSqlBaseVisitor;
-import io.github.melin.superior.parser.flink.antlr4.BaseFlinkSqlParser;
+import io.github.melin.superior.parser.flink.antlr4.FlinkSqlParserBaseVisitor;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -25,7 +24,7 @@ public class TableLineageExtractor {
     public TableLineage extractFromSql(String sql) {
         try {
             // 创建词法分析器
-            CharStream charStream = new AntlrInputStream(new ByteArrayInputStream(sql.getBytes()));
+            CharStream charStream = CharStreams.fromString(sql);
             FlinkSqlLexer lexer = new FlinkSqlLexer(charStream);
             
             // 创建解析器
@@ -35,20 +34,17 @@ public class TableLineageExtractor {
             // 移除默认错误监听器（避免输出到控制台）
             parser.removeErrorListeners();
             
-            // 添加自定义错误处理器
+            // 添加自定义错误处理器（静默收集，不中断解析）
+            final List<String> parseErrors = new ArrayList<>();
             parser.addErrorListener(new BaseErrorListener() {
                 @Override
                 public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-                    // 静默处理错误
+                    parseErrors.add("行 " + line + ":" + charPositionInLine + " " + msg);
                 }
             });
             
-            // 解析 SQL 语句
+            // 解析 SQL 语句（容错模式：存在语法错误时仍使用部分解析结果）
             FlinkSqlParser.SqlStatementsContext stmtCtx = parser.sqlStatements();
-            
-            if (parser.hasErrors()) {
-                throw new RuntimeException("SQL 解析失败：" + parser.getErrors());
-            }
             
             // 创建血缘提取访问者
             LineageVisitor visitor = new LineageVisitor(sql);
@@ -75,11 +71,12 @@ public class TableLineageExtractor {
     /**
      * ANTLR4 Visitor 实现 - 遍历 AST 并提取血缘信息
      */
-    private static class LineageVisitor extends FlinkSqlBaseVisitor<Void> {
+    private static class LineageVisitor extends FlinkSqlParserBaseVisitor<Void> {
         
         private final String originalSql;
         private String targetTable;
         private Set<String> sourceTables = new HashSet<>();
+        private Set<String> cteNames = new HashSet<>();
         private String processType = "SELECT";
         private String insertMode = "INTO";
         private boolean hasCte = false;
@@ -118,13 +115,22 @@ public class TableLineageExtractor {
         public Void visitCteStatement(FlinkSqlParser.CteStatementContext ctx) {
             hasCte = true;
             
-            // 访问所有 CTE 定义
+            // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表）
+            for (FlinkSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
+                if (cteCtx.cteName() != null) {
+                    cteNames.add(cteCtx.cteName().getText());
+                }
+            }
+            
+            // 访问所有 CTE 定义，提取其内部查询的物理源表
             for (FlinkSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
                 visit(cteCtx);
             }
             
-            // 访问主查询
-            if (ctx.queryExpression() != null) {
+            // 主语句：WITH ... INSERT INTO ... 或 WITH ... SELECT ...
+            if (ctx.insertStatement() != null) {
+                visit(ctx.insertStatement());
+            } else if (ctx.queryExpression() != null) {
                 visit(ctx.queryExpression());
             }
             
@@ -152,13 +158,7 @@ public class TableLineageExtractor {
         
         @Override
         public Void visitCteDefinition(FlinkSqlParser.CteDefinitionContext ctx) {
-            // 提取 CTE 名称
-            String cteName = extractCteName(ctx);
-            
-            // 将 CTE 视为临时源表
-            sourceTables.add(cteName);
-            
-            // 访问内部查询
+            // CTE 名称已在外层注册，仅访问内部查询提取物理源表
             if (ctx.queryExpression() != null) {
                 visit(ctx.queryExpression());
             }
@@ -171,6 +171,11 @@ public class TableLineageExtractor {
             // 访问 FROM 子句以提取表
             if (ctx.fromClause() != null) {
                 visit(ctx.fromClause());
+            }
+            
+            // 访问集合操作（UNION/INTERSECT/EXCEPT）右侧子查询
+            for (FlinkSqlParser.QueryExpressionContext childCtx : ctx.queryExpression()) {
+                visit(childCtx);
             }
             
             // 检查窗口函数
@@ -191,29 +196,35 @@ public class TableLineageExtractor {
         
         @Override
         public Void visitTableReference(FlinkSqlParser.TableReferenceContext ctx) {
-            // 处理嵌套查询
-            if (ctx.queryExpression() != null) {
-                visit(ctx.queryExpression());
-                return null;
+            // JOIN 分支：先递归处理左侧表引用
+            if (ctx.tableReference() != null) {
+                visit(ctx.tableReference());
             }
             
             // 处理表路径
             if (ctx.tablePath() != null) {
-                String tableName = extractTableName(ctx.tablePath());
-                if (tableName != null && !sourceTables.contains(tableName)) {
-                    sourceTables.add(tableName);
-                }
+                addSourceTable(extractTableName(ctx.tablePath()));
             }
             
-            // 递归处理 JOIN
-            if (ctx.joinType() != null && ctx.tablePath() != null) {
-                String tableName = extractTableName(ctx.tablePath());
-                if (tableName != null && !sourceTables.contains(tableName)) {
-                    sourceTables.add(tableName);
-                }
+            // 处理子查询
+            if (ctx.queryExpression() != null) {
+                visit(ctx.queryExpression());
             }
             
             return null;
+        }
+        
+        /**
+         * 添加源表（排除 CTE 临时名称）
+         */
+        private void addSourceTable(String tableName) {
+            if (tableName == null || tableName.isEmpty()) {
+                return;
+            }
+            if (cteNames.contains(tableName)) {
+                return;
+            }
+            sourceTables.add(tableName);
         }
         
         @Override
@@ -252,6 +263,7 @@ public class TableLineageExtractor {
             }
             return ctx.cteName().getText();
         }
+        
         
         /**
          * 提取函数名
