@@ -8,6 +8,7 @@ import io.github.melin.superior.parser.presto.antlr4.PrestoSqlParser;
 import io.github.melin.superior.parser.presto.antlr4.PrestoSqlParserBaseVisitor;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -30,15 +31,27 @@ public class PrestoTableLineageExtractor {
      */
     public TableLineage extractFromSql(String sql) {
         try {
-            // 创建词法分析器（静默错误）
+            // 语法错误计数：ANTLR 容错模式会产生部分解析树，必须标记结果不可信
+            final AtomicInteger syntaxErrors = new AtomicInteger();
+            BaseErrorListener errorListener = new BaseErrorListener() {
+                @Override
+                public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
+                                        int line, int charPositionInLine, String msg, RecognitionException e) {
+                    syntaxErrors.incrementAndGet();
+                }
+            };
+            
+            // 创建词法分析器（错误进入计数器而非控制台）
             CharStream charStream = CharStreams.fromString(sql);
             PrestoSqlLexer lexer = new PrestoSqlLexer(charStream);
             lexer.removeErrorListeners();
+            lexer.addErrorListener(errorListener);
             
             // 创建解析器（容错模式：存在语法错误时仍使用部分解析结果）
             CommonTokenStream tokens = new CommonTokenStream(lexer);
             PrestoSqlParser parser = new PrestoSqlParser(tokens);
             parser.removeErrorListeners();
+            parser.addErrorListener(errorListener);
             
             PrestoSqlParser.SqlStatementsContext stmtCtx = parser.sqlStatements();
             
@@ -55,6 +68,7 @@ public class PrestoTableLineageExtractor {
                     .hasCte(visitor.hasCte())
                     .hasTemporalJoin(visitor.hasTemporalJoin())
                     .hasWindowFunc(visitor.hasWindowFunc())
+                    .parseError(syntaxErrors.get() > 0)
                     .originalSql(sql)
                     .confidence(DEFAULT_CONFIDENCE)
                     .build();
@@ -155,20 +169,8 @@ public class PrestoTableLineageExtractor {
             return null;
         }
         
-        @Override
-        public Void visitQueryExpression(PrestoSqlParser.QueryExpressionContext ctx) {
-            // 访问 FROM 子句以提取表
-            if (ctx.fromClause() != null) {
-                visit(ctx.fromClause());
-            }
-            
-            // 访问集合操作（UNION/INTERSECT/EXCEPT）右侧子查询
-            for (PrestoSqlParser.QueryExpressionContext childCtx : ctx.queryExpression()) {
-                visit(childCtx);
-            }
-            
-            return null;
-        }
+        // visitQueryExpression 不覆写：使用基类 visitChildren 完整下钻
+        // SELECT/WHERE 中的子查询（IN、标量子查询）同样产生表依赖
         
         @Override
         public Void visitFromClause(PrestoSqlParser.FromClauseContext ctx) {

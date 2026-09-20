@@ -199,6 +199,7 @@ expression
     | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | LPAREN queryExpression RPAREN
     | primaryExpression
     | functionCall
     | castExpression

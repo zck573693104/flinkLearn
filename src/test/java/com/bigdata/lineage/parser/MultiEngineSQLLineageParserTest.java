@@ -477,4 +477,105 @@ public class MultiEngineSQLLineageParserTest {
         assertEquals("t_out", lineages.get(0).getTargetTable());
         assertTrue(lineages.get(0).getSourceTables().contains("t_in"));
     }
+
+    // ============================================
+    // 幻影表 bug 回归：子查询视图别名/字段曾被误识别为输入表
+    // ============================================
+
+    @Test
+    public void testDerivedTableAliasNotPhantom() {
+        String sql = "INSERT INTO dwd.t1 SELECT a.id, b.name "
+                + "FROM (SELECT id FROM ods.s1) a JOIN (SELECT id, name FROM ods.s2) b ON a.id = b.id";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertEquals("dwd.t1", l.getTargetTable());
+        assertEquals(2, l.getSourceTables().size());
+        assertTrue(l.getSourceTables().contains("ods.s1"));
+        assertTrue(l.getSourceTables().contains("ods.s2"));
+        assertFalse(l.getSourceTables().contains("a"));
+        assertFalse(l.getSourceTables().contains("b"));
+    }
+
+    @Test
+    public void testHiveStaticPartitionNotPhantom() {
+        String sql = "INSERT OVERWRITE TABLE dwd.tp PARTITION(dt='2024-01-01') "
+                + "SELECT u FROM (SELECT uid AS u FROM ods.sp) v";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertEquals("dwd.tp", l.getTargetTable());
+        assertTrue(l.getSourceTables().contains("ods.sp"));
+        assertFalse(l.getSourceTables().contains("v"));
+        assertFalse(l.isParseError());
+    }
+
+    @Test
+    public void testHiveDynamicPartitionNotPhantom() {
+        String sql = "INSERT OVERWRITE TABLE dwd.tdp PARTITION (dt) SELECT id, dt FROM ods.sdp";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertEquals("dwd.tdp", l.getTargetTable());
+        assertTrue(l.getSourceTables().contains("ods.sdp"));
+    }
+
+    @Test
+    public void testNestedDerivedTablesNotPhantom() {
+        String sql = "INSERT INTO dwd.t8 SELECT s.v1 "
+                + "FROM (SELECT x.v1 FROM (SELECT v1 FROM ods.s11) x) s";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertEquals("dwd.t8", l.getTargetTable());
+        assertEquals(1, l.getSourceTables().size());
+        assertTrue(l.getSourceTables().contains("ods.s11"));
+    }
+
+    @Test
+    public void testFieldQualifiedNotPhantomSource() {
+        // 限定字段 a.info.city 不应把 a 或 a.info 当成输入表
+        String sql = "INSERT INTO dwd.tq SELECT a.info.city FROM (SELECT info FROM ods.sq) a";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertEquals(1, l.getSourceTables().size());
+        assertTrue(l.getSourceTables().contains("ods.sq"));
+    }
+
+    @Test
+    public void testWhereInSubqueryAddsRealTable() {
+        // WHERE IN (SELECT...) 里的表也要计为输入（此前被丢弃）
+        String sql = "INSERT INTO dwd.t7 SELECT id FROM ods.s9 WHERE id IN (SELECT id FROM dim.s10)";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertTrue(l.getSourceTables().contains("ods.s9"));
+        assertTrue(l.getSourceTables().contains("dim.s10"));
+    }
+
+    @Test
+    public void testScalarSubqueryInSelectListAddsRealTables() {
+        // SELECT 列表中的标量子查询：主表和子查询表都要收集
+        String sql = "INSERT INTO dwd.t17 SELECT (SELECT max(dt) FROM dim.s23) FROM ods.s24";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertEquals(1, lineages.size());
+        TableLineage l = lineages.get(0);
+        assertTrue(l.getSourceTables().contains("ods.s24"));
+        assertTrue(l.getSourceTables().contains("dim.s23"));
+    }
 }

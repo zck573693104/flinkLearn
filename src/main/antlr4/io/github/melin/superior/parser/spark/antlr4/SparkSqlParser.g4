@@ -35,8 +35,14 @@ useStatement
 // ============================================
 
 insertStatement
-    : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath 
+    : KW_INSERT (KW_INTO | KW_OVERWRITE)? KW_TABLE? tablePath
+      (KW_PARTITION LPAREN partitionSpec (COMMA partitionSpec)* RPAREN)?
       (LPAREN columnNameList RPAREN)? queryExpression
+    ;
+
+// Hive 风格分区说明：PARTITION (dt='2024-01-01') 或 PARTITION (dt)
+partitionSpec
+    : uid (EQ (STRING | NUMBER | DOUBLE_QUOTED_STRING | uid))?
     ;
 
 // ============================================
@@ -212,6 +218,7 @@ expression
     | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | LPAREN queryExpression RPAREN
     | caseExpression
     | primaryExpression
     | functionCall

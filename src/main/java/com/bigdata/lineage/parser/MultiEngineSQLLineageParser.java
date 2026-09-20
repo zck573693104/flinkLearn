@@ -101,37 +101,51 @@ public class MultiEngineSQLLineageParser {
     }
     
     /**
-     * 自动识别引擎并提取血缘
+     * 自动识别引擎并提取血缘。
+     * 优先采纳无语法错误的干净解析结果；三套语法都报错时才回退到
+     * 错误恢复的部分结果（调用方可通过 parseError 字段识别不可信血缘）
      */
     private TableLineage extractWithAutoDetect(String sql) {
-        // 尝试 Flink SQL
         TableLineage flinkResult = tryExtractFlink(sql);
-        if (flinkResult != null && hasLineage(flinkResult)) {
+        if (isCleanLineage(flinkResult)) {
             log.debug("识别为 Flink SQL");
             return flinkResult;
         }
         
-        // 尝试 Spark SQL
         TableLineage sparkResult = tryExtractSpark(sql);
-        if (sparkResult != null && hasLineage(sparkResult)) {
+        if (isCleanLineage(sparkResult)) {
             log.debug("识别为 Spark SQL");
             return sparkResult;
         }
         
-        // 尝试 Presto SQL
         TableLineage prestoResult = tryExtractPresto(sql);
-        if (prestoResult != null && hasLineage(prestoResult)) {
+        if (isCleanLineage(prestoResult)) {
             log.debug("识别为 Presto SQL");
             return prestoResult;
         }
         
-        // 所有尝试都失败，返回第一个非空结果（即使没有血缘）
+        // 无引擎能完整解析：回退到第一个带血缘的部分结果
+        for (TableLineage result : new TableLineage[]{flinkResult, sparkResult, prestoResult}) {
+            if (result != null && hasLineage(result)) {
+                log.warn("SQL 存在语法错误，血缘为部分解析结果（可能缺表/错表）: {}",
+                        sql.substring(0, Math.min(100, sql.length())));
+                return result;
+            }
+        }
+        
         if (flinkResult != null) return flinkResult;
         if (sparkResult != null) return sparkResult;
         if (prestoResult != null) return prestoResult;
         
         log.warn("无法识别 SQL 引擎或解析失败：{}", sql);
         return null;
+    }
+    
+    /**
+     * 无语法错误且含血缘的结果才可优先采纳
+     */
+    private boolean isCleanLineage(TableLineage lineage) {
+        return lineage != null && !lineage.isParseError() && hasLineage(lineage);
     }
     
     /**

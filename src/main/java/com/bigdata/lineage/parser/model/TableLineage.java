@@ -52,6 +52,11 @@ public class TableLineage {
     private boolean hasWindowFunc = false;
     
     /**
+     * 解析过程是否存在语法错误（true 表示 ANTLR 错误恢复的部分结果，血缘可能缺表/错表）
+     */
+    private boolean parseError;
+    
+    /**
      * 原始 SQL 语句
      */
     private String originalSql;
