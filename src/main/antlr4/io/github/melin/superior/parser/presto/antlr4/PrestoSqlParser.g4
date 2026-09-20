@@ -20,6 +20,11 @@ statement
     | alterTableStatement SEMICOLON?
     | updateStatement SEMICOLON?
     | deleteStatement SEMICOLON?
+    | useStatement SEMICOLON?
+    ;
+
+useStatement
+    : KW_USE tablePath
     ;
 
 // ============================================
@@ -44,7 +49,7 @@ selectStatement
 // ============================================
 
 cteStatement
-    : KW_WITH cteDefinition (COMMA cteDefinition)* queryExpression
+    : KW_WITH cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
     ;
 
 cteDefinition
@@ -90,7 +95,12 @@ tableReference
     | LPAREN queryExpression RPAREN (alias)?
     | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
-    | KW_UNNEST LPAREN expression RPAREN (alias)?
+    | KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
+    | tableReference joinType? KW_JOIN KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
+    ;
+
+aliasWithColumns
+    : KW_AS? uid LPAREN uid (COMMA uid)* RPAREN
     ;
 
 joinType
@@ -177,7 +187,10 @@ columnNameList
 // ============================================
 
 expression
-    : expression (PLUS | MINUS | MULT | DIV | MOD) expression
+    : expression LBRACKET expression RBRACKET
+    | expression DOT uid
+    | (PLUS | MINUS) expression
+    | expression (PLUS | MINUS | MULT | DIV | MOD) expression
     | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT) expression
     | expression KW_AND expression
     | expression KW_OR expression
@@ -310,6 +323,9 @@ alias
 
 functionName
     : uid
+    | KW_IF
+    | KW_LEFT
+    | KW_RIGHT
     ;
 
 cteName

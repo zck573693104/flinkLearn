@@ -78,6 +78,11 @@ KW_COLUMN: [Cc][Oo][Ll][Uu][Mm][Nn];
 KW_SET: [Ss][Ee][Tt];
 KW_USE: [Uu][Ss][Ee];
 KW_UNNEST: [Uu][Nn][Nn][Ee][Ss][Tt];
+KW_CASE: [Cc][Aa][Ss][Ee];
+KW_WHEN: [Ww][Hh][Ee][Nn];
+KW_THEN: [Tt][Hh][Ee][Nn];
+KW_ELSE: [Ee][Ll][Ss][Ee];
+KW_END: [Ee][Nn][Dd];
 
 // ============================================
 // 数据类型关键字

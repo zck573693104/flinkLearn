@@ -124,6 +124,12 @@ KW_CANCEL: [Cc][Aa][Nn][Cc][Ee][Ll];
 KW_KILL: [Kk][Ii][Ll][Ll];
 KW_SHOW: [Ss][Hh][Oo][Ww];
 KW_USE: [Uu][Ss][Ee];
+KW_UNNEST: [Uu][Nn][Nn][Ee][Ss][Tt];
+KW_CASE: [Cc][Aa][Ss][Ee];
+KW_WHEN: [Ww][Hh][Ee][Nn];
+KW_THEN: [Tt][Hh][Ee][Nn];
+KW_ELSE: [Ee][Ll][Ss][Ee];
+KW_END: [Ee][Nn][Dd];
 KW_SET: [Ss][Ee][Tt];
 KW_UNSET: [Uu][Nn][Ss][Ee][Tt];
 KW_CONF: [Cc][Oo][Nn][Ff];
@@ -409,7 +415,7 @@ KW_IS_IPV6: 'IS_IPV6';
 // ============================================
 
 // missing keywords referenced by parser grammar
-DOUBLE_QUOTED_STRING: '"' (~['"])+ '"';
+DOUBLE_QUOTED_STRING: '"' (~["])+ '"';
 KW_ASC: [Aa][Ss][Cc];
 KW_COLUMN: [Cc][Oo][Ll][Uu][Mm][Nn];
 KW_COLUMNS: [Cc][Oo][Ll][Uu][Mm][Nn][Ss];
@@ -433,7 +439,7 @@ QUOTED_UID: '`' ~[`]+ '`';
 // 字符串和数字
 // ============================================
 
-STRING: '\'' (~'\'')+ '\'';
+STRING: '\'' ( '\'\'' | ~['] )* '\'';
 
 NUMBER: [0-9]+;
 DECIMAL_NUMBER: [0-9]+'.'[0-9]+;

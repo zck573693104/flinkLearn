@@ -93,9 +93,10 @@ fromClause
 tableReference
     : tablePath (alias)?
     | LPAREN queryExpression RPAREN (alias)?
-    | KW_UNNEST LPAREN expression RPAREN (aliasWithColumns)?
+    | KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
     | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
+    | tableReference joinType? KW_JOIN KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
     ;
 
 aliasWithColumns
@@ -172,10 +173,15 @@ expression
     | expression KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
+    | caseExpression
     | primaryExpression
     | functionCall
     | castExpression
     | MULT
+    ;
+
+caseExpression
+    : KW_CASE expression? (KW_WHEN expression KW_THEN expression)+ (KW_ELSE expression)? KW_END
     ;
 
 primaryExpression

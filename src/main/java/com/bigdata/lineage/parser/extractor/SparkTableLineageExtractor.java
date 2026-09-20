@@ -118,8 +118,10 @@ public class SparkTableLineageExtractor {
                 visit(cteCtx);
             }
             
-            // 访问主查询
-            if (ctx.queryExpression() != null) {
+            // 访问主查询（WITH ... INSERT INTO 或 WITH ... SELECT）
+            if (ctx.insertStatement() != null) {
+                visit(ctx.insertStatement());
+            } else if (ctx.queryExpression() != null) {
                 visit(ctx.queryExpression());
             }
             

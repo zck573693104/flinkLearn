@@ -118,8 +118,10 @@ public class PrestoTableLineageExtractor {
                 visit(cteCtx);
             }
             
-            // 访问主查询
-            if (ctx.queryExpression() != null) {
+            // 访问主查询（WITH ... INSERT INTO 或 WITH ... SELECT）
+            if (ctx.insertStatement() != null) {
+                visit(ctx.insertStatement());
+            } else if (ctx.queryExpression() != null) {
                 visit(ctx.queryExpression());
             }
             
@@ -180,15 +182,14 @@ public class PrestoTableLineageExtractor {
         
         @Override
         public Void visitTableReference(PrestoSqlParser.TableReferenceContext ctx) {
-            // 处理 UNNEST
-            if (ctx.KW_UNNEST() != null && ctx.expression() != null) {
-                // UNNEST 不产生新表依赖
-                return null;
-            }
-            
-            // JOIN 分支：先递归处理左侧表引用
+            // JOIN 分支：先递归处理左侧表引用（含左侧 JOIN ... UNNEST 场景）
             if (ctx.tableReference() != null) {
                 visit(ctx.tableReference());
+            }
+            
+            // 处理 UNNEST：不产生新表依赖
+            if (ctx.KW_UNNEST() != null) {
+                return null;
             }
             
             // 处理表路径

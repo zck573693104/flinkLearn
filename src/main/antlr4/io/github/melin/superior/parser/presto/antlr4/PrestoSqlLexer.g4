@@ -344,6 +344,7 @@ KW_EXPLODE: [Ee][Xx][Pp][Ll][Oo][Dd][Ee];
 KW_POSEXPLODE: [Pp][Oo][Ss][Ee][Xx][Pp][Ll][Oo][Dd][Ee];
 KW_GENERATE_SUBSCRIPTS: 'GENERATE_SUBSCRIPTS';
 KW_UNNEST: [Uu][Nn][Nn][Ee][Ss][Tt];
+KW_USE: [Uu][Ss][Ee];
 KW_CARTESIAN_PRODUCT: 'CARTESIAN_PRODUCT';
 KW_SIDWAYS: [Ss][Ii][Dd][Ww][Aa][Yy][Ss];
 KW_LATERAL: [Ll][Aa][Tt][Ee][Rr][Aa][Ll];
@@ -437,7 +438,7 @@ KW_TACACS: [Tt][Aa][Cc][Aa][Cc][Ss];
 
 // missing keywords referenced by parser grammar
 DOUBLE_QUOTED_ID: '"' (~['"])+ '"';
-DOUBLE_QUOTED_STRING: '"' (~['"])+ '"';
+DOUBLE_QUOTED_STRING: '"' (~["])+ '"';
 KW_ADD: [Aa][Dd][Dd];
 KW_ASC: [Aa][Ss][Cc];
 KW_BINARY: [Bb][Ii][Nn][Aa][Rr][Yy];
@@ -462,7 +463,7 @@ QUOTED_UID: '`' (~[`])+ '`';
 // 字符串和数字
 // ============================================
 
-STRING: '\'' (~'\'')+ '\'';
+STRING: '\'' ( '\'\'' | ~['] )* '\'';
 
 NUMBER: [0-9]+;
 DECIMAL_NUMBER: [0-9]+'.'[0-9]+;
