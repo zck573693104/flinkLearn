@@ -18,36 +18,30 @@ public class TableLineageExtractor {
     
     private static final double DEFAULT_CONFIDENCE = 0.95;
     
+    private static final Set<String> WINDOW_FUNCTIONS = new HashSet<>(Arrays.asList(
+            "TUMBLE", "HOP", "CUMULATE", "SESSION",
+            "ROW_NUMBER", "RANK", "DENSE_RANK", "ROWNUM"
+    ));
+    
     /**
      * 从 SQL 语句提取表级血缘
      */
     public TableLineage extractFromSql(String sql) {
         try {
-            // 创建词法分析器
+            // 创建词法分析器（静默错误，避免输出到控制台）
             CharStream charStream = CharStreams.fromString(sql);
             FlinkSqlLexer lexer = new FlinkSqlLexer(charStream);
+            lexer.removeErrorListeners();
             
-            // 创建解析器
+            // 创建解析器（容错模式：存在语法错误时仍使用部分解析结果）
             CommonTokenStream tokens = new CommonTokenStream(lexer);
             FlinkSqlParser parser = new FlinkSqlParser(tokens);
-            
-            // 移除默认错误监听器（避免输出到控制台）
             parser.removeErrorListeners();
             
-            // 添加自定义错误处理器（静默收集，不中断解析）
-            final List<String> parseErrors = new ArrayList<>();
-            parser.addErrorListener(new BaseErrorListener() {
-                @Override
-                public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-                    parseErrors.add("行 " + line + ":" + charPositionInLine + " " + msg);
-                }
-            });
-            
-            // 解析 SQL 语句（容错模式：存在语法错误时仍使用部分解析结果）
             FlinkSqlParser.SqlStatementsContext stmtCtx = parser.sqlStatements();
             
             // 创建血缘提取访问者
-            LineageVisitor visitor = new LineageVisitor(sql);
+            LineageVisitor visitor = new LineageVisitor();
             visitor.visit(stmtCtx);
             
             // 构建血缘关系
@@ -73,7 +67,6 @@ public class TableLineageExtractor {
      */
     private static class LineageVisitor extends FlinkSqlParserBaseVisitor<Void> {
         
-        private final String originalSql;
         private String targetTable;
         private Set<String> sourceTables = new HashSet<>();
         private Set<String> cteNames = new HashSet<>();
@@ -82,10 +75,6 @@ public class TableLineageExtractor {
         private boolean hasCte = false;
         private boolean hasTemporalJoin = false;
         private boolean hasWindowFunc = false;
-        
-        LineageVisitor(String originalSql) {
-            this.originalSql = originalSql;
-        }
         
         @Override
         public Void visitInsertStatement(FlinkSqlParser.InsertStatementContext ctx) {
@@ -178,9 +167,6 @@ public class TableLineageExtractor {
                 visit(childCtx);
             }
             
-            // 检查窗口函数
-            checkForWindowFunctions();
-            
             return null;
         }
         
@@ -255,17 +241,6 @@ public class TableLineageExtractor {
         }
         
         /**
-         * 提取 CTE 名称
-         */
-        private String extractCteName(FlinkSqlParser.CteDefinitionContext ctx) {
-            if (ctx.cteName() == null) {
-                return null;
-            }
-            return ctx.cteName().getText();
-        }
-        
-        
-        /**
          * 提取函数名
          */
         private String extractFunctionName(FlinkSqlParser.FunctionCallContext ctx) {
@@ -276,27 +251,10 @@ public class TableLineageExtractor {
         }
         
         /**
-         * 检查是否有窗口函数
-         */
-        private void checkForWindowFunctions() {
-            // 检查 WINDOW 子句
-            // 这里可以添加更复杂的逻辑来检测 TUMBLE, HOP, CUMULATE 等 TVF
-        }
-        
-        /**
          * 判断是否为窗口函数
          */
         private boolean isWindowFunction(String funcName) {
-            if (funcName == null) {
-                return false;
-            }
-            
-            Set<String> windowFuncs = new HashSet<>(Arrays.asList(
-                    "TUMBLE", "HOP", "CUMULATE", "SESSION",
-                    "ROW_NUMBER", "RANK", "DENSE_RANK", "ROWNUM"
-            ));
-            
-            return windowFuncs.contains(funcName.toUpperCase());
+            return funcName != null && WINDOW_FUNCTIONS.contains(funcName);
         }
         
         // Getters

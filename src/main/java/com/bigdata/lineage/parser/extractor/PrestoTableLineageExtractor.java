@@ -19,36 +19,31 @@ public class PrestoTableLineageExtractor {
     
     private static final double DEFAULT_CONFIDENCE = 0.95;
     
+    private static final Set<String> WINDOW_FUNCTIONS = new HashSet<>(Arrays.asList(
+            "ROW_NUMBER", "RANK", "DENSE_RANK", "NTILE", "PERCENT_RANK",
+            "CUME_DIST", "FIRST_VALUE", "LAST_VALUE", "LAG", "LEAD",
+            "NTH_VALUE"
+    ));
+    
     /**
      * 从 SQL 语句提取表级血缘
      */
     public TableLineage extractFromSql(String sql) {
         try {
-            // 创建词法分析器
+            // 创建词法分析器（静默错误）
             CharStream charStream = CharStreams.fromString(sql);
             PrestoSqlLexer lexer = new PrestoSqlLexer(charStream);
+            lexer.removeErrorListeners();
             
-            // 创建解析器
+            // 创建解析器（容错模式：存在语法错误时仍使用部分解析结果）
             CommonTokenStream tokens = new CommonTokenStream(lexer);
             PrestoSqlParser parser = new PrestoSqlParser(tokens);
-            
-            // 移除默认错误监听器
             parser.removeErrorListeners();
             
-            // 添加自定义错误处理器（静默收集，不中断解析）
-            final List<String> parseErrors = new ArrayList<>();
-            parser.addErrorListener(new BaseErrorListener() {
-                @Override
-                public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-                    parseErrors.add("行 " + line + ":" + charPositionInLine + " " + msg);
-                }
-            });
-            
-            // 解析 SQL 语句（容错模式：存在语法错误时仍使用部分解析结果）
             PrestoSqlParser.SqlStatementsContext stmtCtx = parser.sqlStatements();
             
             // 创建血缘提取访问者
-            LineageVisitor visitor = new LineageVisitor(sql);
+            LineageVisitor visitor = new LineageVisitor();
             visitor.visit(stmtCtx);
             
             // 构建血缘关系
@@ -74,18 +69,14 @@ public class PrestoTableLineageExtractor {
      */
     private static class LineageVisitor extends PrestoSqlParserBaseVisitor<Void> {
         
-        private final String originalSql;
         private String targetTable;
         private Set<String> sourceTables = new HashSet<>();
+        private Set<String> cteNames = new HashSet<>();
         private String processType = "SELECT";
         private String insertMode = "INTO";
         private boolean hasCte = false;
         private boolean hasTemporalJoin = false;
         private boolean hasWindowFunc = false;
-        
-        LineageVisitor(String originalSql) {
-            this.originalSql = originalSql;
-        }
         
         @Override
         public Void visitInsertStatement(PrestoSqlParser.InsertStatementContext ctx) {
@@ -114,6 +105,13 @@ public class PrestoTableLineageExtractor {
         @Override
         public Void visitCteStatement(PrestoSqlParser.CteStatementContext ctx) {
             hasCte = true;
+            
+            // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表）
+            for (PrestoSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
+                if (cteCtx.cteName() != null) {
+                    cteNames.add(cteCtx.cteName().getText());
+                }
+            }
             
             // 访问所有 CTE 定义
             for (PrestoSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
@@ -167,9 +165,6 @@ public class PrestoTableLineageExtractor {
                 visit(childCtx);
             }
             
-            // 检查窗口函数
-            checkForWindowFunctions();
-            
             return null;
         }
         
@@ -198,10 +193,7 @@ public class PrestoTableLineageExtractor {
             
             // 处理表路径
             if (ctx.tablePath() != null) {
-                String tableName = extractTableName(ctx.tablePath());
-                if (tableName != null) {
-                    sourceTables.add(tableName);
-                }
+                addSourceTable(extractTableName(ctx.tablePath()));
             }
             
             // 处理嵌套子查询
@@ -210,6 +202,16 @@ public class PrestoTableLineageExtractor {
             }
             
             return null;
+        }
+        
+        /**
+         * 添加源表（排除 CTE 临时名称）
+         */
+        private void addSourceTable(String tableName) {
+            if (tableName == null || tableName.isEmpty() || cteNames.contains(tableName)) {
+                return;
+            }
+            sourceTables.add(tableName);
         }
         
         @Override
@@ -296,27 +298,10 @@ public class PrestoTableLineageExtractor {
         }
         
         /**
-         * 检查是否有窗口函数
-         */
-        private void checkForWindowFunctions() {
-            // 检查 WINDOW 子句
-        }
-        
-        /**
          * 判断是否为窗口函数
          */
         private boolean isWindowFunction(String funcName) {
-            if (funcName == null) {
-                return false;
-            }
-            
-            Set<String> windowFuncs = new HashSet<>(Arrays.asList(
-                    "ROW_NUMBER", "RANK", "DENSE_RANK", "NTILE", "PERCENT_RANK",
-                    "CUME_DIST", "FIRST_VALUE", "LAST_VALUE", "LAG", "LEAD",
-                    "NTH_VALUE"
-            ));
-            
-            return windowFuncs.contains(funcName.toUpperCase());
+            return funcName != null && WINDOW_FUNCTIONS.contains(funcName);
         }
         
         // Getters

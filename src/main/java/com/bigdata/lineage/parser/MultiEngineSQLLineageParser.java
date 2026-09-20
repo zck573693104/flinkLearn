@@ -6,9 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -29,13 +27,10 @@ public class MultiEngineSQLLineageParser {
     private final SparkTableLineageExtractor sparkExtractor;
     private final PrestoTableLineageExtractor prestoExtractor;
     private final boolean enableCache;
-    private final Map<String, List<TableLineage>> cache = new ConcurrentHashMap<>();
+    private final SqlCache cache;
     
     public MultiEngineSQLLineageParser() {
-        this.flinkExtractor = new TableLineageExtractor();
-        this.sparkExtractor = new SparkTableLineageExtractor();
-        this.prestoExtractor = new PrestoTableLineageExtractor();
-        this.enableCache = true;
+        this(true);
     }
     
     public MultiEngineSQLLineageParser(boolean enableCache) {
@@ -43,6 +38,7 @@ public class MultiEngineSQLLineageParser {
         this.sparkExtractor = new SparkTableLineageExtractor();
         this.prestoExtractor = new PrestoTableLineageExtractor();
         this.enableCache = enableCache;
+        this.cache = new SqlCache();
     }
     
     /**
@@ -68,18 +64,21 @@ public class MultiEngineSQLLineageParser {
             return new ArrayList<>();
         }
         
+        boolean useCacheFlag = useCache && enableCache;
+        String cacheKey = sql.trim().toLowerCase();
+        
         // 检查缓存
-        if (useCache && enableCache) {
-            String cacheKey = sql.trim().toLowerCase();
-            if (cache.containsKey(cacheKey)) {
+        if (useCacheFlag) {
+            List<TableLineage> cached = cache.get(cacheKey);
+            if (cached != null) {
                 log.debug("命中缓存：{}", cacheKey.substring(0, Math.min(50, cacheKey.length())));
-                return cache.get(cacheKey);
+                return cached;
             }
         }
         
         try {
             // 分割多语句（如果存在多个 SQL）
-            List<String> statements = splitStatements(sql);
+            List<String> statements = SqlSplitUtils.splitStatements(sql);
             
             // 识别引擎并提取血缘
             List<TableLineage> lineages = statements.stream()
@@ -88,8 +87,7 @@ public class MultiEngineSQLLineageParser {
                     .collect(Collectors.toList());
             
             // 缓存结果
-            if (useCache && enableCache && !lineages.isEmpty()) {
-                String cacheKey = sql.trim().toLowerCase();
+            if (useCacheFlag && !lineages.isEmpty()) {
                 cache.put(cacheKey, lineages);
             }
             
@@ -181,13 +179,6 @@ public class MultiEngineSQLLineageParser {
     }
     
     /**
-     * 判断是否有源表
-     */
-    private boolean hasSourceTables(TableLineage lineage) {
-        return lineage.getSourceTables() != null && !lineage.getSourceTables().isEmpty();
-    }
-    
-    /**
      * 批量提取血缘
      * 
      * @param sqlList SQL 语句列表
@@ -205,30 +196,6 @@ public class MultiEngineSQLLineageParser {
     }
     
     /**
-     * 分割多条 SQL 语句
-     */
-    private List<String> splitStatements(String sql) {
-        List<String> statements = new ArrayList<>();
-        
-        // 按分号分割
-        String[] parts = sql.split(";");
-        
-        for (String part : parts) {
-            String trimmed = part.trim();
-            if (!trimmed.isEmpty() && !trimmed.equals(";")) {
-                statements.add(trimmed);
-            }
-        }
-        
-        // 如果没有分号，将整个 SQL 作为一条语句
-        if (statements.isEmpty()) {
-            statements.add(sql);
-        }
-        
-        return statements;
-    }
-    
-    /**
      * 清空缓存
      */
     public void clearCache() {
@@ -241,37 +208,5 @@ public class MultiEngineSQLLineageParser {
      */
     public int getCacheSize() {
         return cache.size();
-    }
-    
-    /**
-     * 简单的缓存实现
-     */
-    private static class Cache<K, V> {
-        private final java.util.Map<K, V> map = new java.util.LinkedHashMap<>(1000, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(java.util.Map.Entry<K, V> eldest) {
-                return size() > 1000; // 最多缓存 1000 条
-            }
-        };
-        
-        public V get(K key) {
-            return map.get(key);
-        }
-        
-        public void put(K key, V value) {
-            map.put(key, value);
-        }
-        
-        public boolean containsKey(K key) {
-            return map.containsKey(key);
-        }
-        
-        public void clear() {
-            map.clear();
-        }
-        
-        public int size() {
-            return map.size();
-        }
     }
 }
