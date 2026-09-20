@@ -281,4 +281,70 @@ public class FlinkSQLLineageParserTest {
         Assert.assertEquals("v", lineage.getTargetTable());
         Assert.assertTrue(lineage.getSourceTables().contains("ods.a"));
     }
+
+    /**
+     * 处理时间时态表 JOIN：维表必须进上游，且 hasTemporalJoin 要能被下游看到
+     */
+    @Test
+    public void testProcessingTimeTemporalJoin() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.enriched SELECT o.id, c.name FROM ods.orders AS o "
+                        + "JOIN dim.currency FOR SYSTEM_TIME AS OF o.proctime AS c ON o.cur = c.id");
+
+        Assert.assertFalse("时态表 JOIN 应可解析", lineage.isParseError());
+        Assert.assertTrue(lineage.isHasTemporalJoin());
+        Assert.assertEquals(Set.of("ods.orders", "dim.currency"), lineage.getSourceTables());
+    }
+
+    @Test
+    public void testEventTimeLeftTemporalJoin() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.enriched SELECT o.id, u.name FROM ods.orders o "
+                        + "LEFT JOIN dim.users FOR SYSTEM_TIME AS OF o.order_time AS u ON o.uid = u.id");
+
+        Assert.assertFalse("LEFT JOIN 时态表应可解析", lineage.isParseError());
+        Assert.assertTrue(lineage.isHasTemporalJoin());
+        Assert.assertEquals(Set.of("ods.orders", "dim.users"), lineage.getSourceTables());
+    }
+
+    /**
+     * 旧式窗口 TVF：输入表写在 TUMBLE 的第一个实参位置
+     */
+    @Test
+    public void testWindowTvfLegacySyntax() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dws.win_cnt SELECT window_start, COUNT(*) "
+                        + "FROM TUMBLE(dwd.orders, ts, INTERVAL '5' MINUTE) GROUP BY window_start");
+
+        Assert.assertFalse("窗口 TVF 应可解析", lineage.isParseError());
+        Assert.assertEquals(Set.of("dwd.orders"), lineage.getSourceTables());
+        Assert.assertTrue(lineage.isHasWindowFunc());
+    }
+
+    /**
+     * Flink 1.14+ 新式 TVF：TABLE(HOP(TABLE t, DESCRIPTOR(col), INTERVAL ...))
+     */
+    @Test
+    public void testWindowTvfNewSyntax() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dws.win_cnt SELECT * FROM TABLE("
+                        + "HOP(TABLE dwd.clicks, DESCRIPTOR(event_time), INTERVAL '1' MINUTE, INTERVAL '5' MINUTE))");
+
+        Assert.assertFalse("新式 TVF 应可解析", lineage.isParseError());
+        Assert.assertEquals(Set.of("dwd.clicks"), lineage.getSourceTables());
+        Assert.assertTrue(lineage.isHasWindowFunc());
+    }
+
+    /**
+     * 词法层守护：时间单位与 SYSTEM_TIME/OF 只是时态语境的软关键字，仍须可作列名
+     */
+    @Test
+    public void testTimeUnitWordsArePlainIdentifiers() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_cal SELECT year, month, day, hour, minute, second, quarter, system_time "
+                        + "FROM ods.s_cal WHERE of = 1");
+
+        Assert.assertFalse("时间单位词不得被词法保留", lineage.isParseError());
+        Assert.assertEquals(Set.of("ods.s_cal"), lineage.getSourceTables());
+    }
 }

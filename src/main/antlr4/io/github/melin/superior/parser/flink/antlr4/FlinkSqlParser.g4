@@ -94,9 +94,16 @@ tableReference
     : tablePath (alias)?
     | LPAREN queryExpression RPAREN (alias)?
     | KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
-    | tableReference joinType? KW_JOIN tablePath (alias)? KW_ON expression
+    | tvfFunction (alias)?
+    | KW_TABLE LPAREN tvfFunction RPAREN (alias)?
+    | tableReference joinType? KW_JOIN tablePath temporalClause? (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN LPAREN queryExpression RPAREN (alias)? KW_ON expression
     | tableReference joinType? KW_JOIN KW_UNNEST LPAREN expression RPAREN (aliasWithColumns | alias)?
+    ;
+
+// 处理时间/事件时间时态表 JOIN：JOIN dim FOR SYSTEM_TIME AS OF probe.proctime
+temporalClause
+    : KW_FOR KW_SYSTEM_TIME KW_AS KW_OF expression
     ;
 
 aliasWithColumns
@@ -176,11 +183,17 @@ expression
     | expression KW_NOT? KW_IN LPAREN queryExpression RPAREN
     | expression KW_NOT? KW_BETWEEN expression KW_AND expression
     | LPAREN queryExpression RPAREN
+    | KW_INTERVAL expression timeUnit
     | caseExpression
     | primaryExpression
     | functionCall
     | castExpression
     | MULT
+    ;
+
+// INTERVAL '5' MINUTE 的时间单位（TVF 窗口大小、WATERMARK 延迟）
+timeUnit
+    : KW_DAY | KW_HOUR | KW_MINUTE | KW_MONTH | KW_QUARTER | KW_SECOND | KW_YEAR
     ;
 
 caseExpression
@@ -206,27 +219,6 @@ functionCall
 
 castExpression
     : KW_CAST LPAREN expression KW_AS dataType RPAREN
-    ;
-
-binaryExpression
-    : expression operator expression
-    ;
-
-// BETWEEN 表达式
-betweenExpression
-    : expression KW_NOT? KW_BETWEEN expression KW_AND expression
-    ;
-
-// IN 表达式
-inExpression
-    : expression (KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN 
-                 | LPAREN queryExpression RPAREN)
-    ;
-
-operator
-    : PLUS | MINUS | MULT | DIV | MOD
-    | EQ | NEQ | LT | GT | LTE | GTE
-    | KW_AND | KW_OR
     ;
 
 literal
@@ -261,6 +253,9 @@ uid
     : UID
     | QUOTED_UID
     | KW_DEFAULT   // default 数据库名等场景下关键字可作标识符
+    | timeUnit     // year/month/day 等在 Flink 里非保留字，仍可作列名
+    | KW_OF
+    | KW_SYSTEM_TIME
     ;
 
 alias
@@ -283,15 +278,13 @@ cteName
 // ============================================
 
 // TVF 函数调用（TUMBLE, HOP, SESSION, CUMULATE）
+// 首个实参是输入表：旧式 TUMBLE(t, ts, INTERVAL '5' MINUTE)
+// 与新式 TUMBLE(TABLE t, DESCRIPTOR(ts), INTERVAL '5' MINUTE)
 tvfFunction
-    : functionName LPAREN tablePath (COMMA expression)+ RPAREN
+    : functionName LPAREN KW_TABLE? tablePath (COMMA expression)* RPAREN
     ;
 
 // 窗口定义（用于 ROW_NUMBER, RANK 等窗口函数）
-windowSpecification
-    : uid KW_OVER LPAREN windowDefinition RPAREN
-    ;
-
 windowDefinition
     : partitionByClause? orderByClause? windowFrame?
     ;

@@ -197,6 +197,17 @@ public class TableLineageExtractor {
                 addSourceTable(extractTableName(ctx.tablePath()));
             }
             
+            // 窗口 TVF：FROM TUMBLE(t, ts, INTERVAL '5' MINUTE) / FROM TABLE(TUMBLE(TABLE t, ...))
+            if (ctx.tvfFunction() != null) {
+                visit(ctx.tvfFunction());
+            }
+            
+            // 时态表 JOIN：JOIN dim FOR SYSTEM_TIME AS OF probe.proctime
+            if (ctx.temporalClause() != null) {
+                hasTemporalJoin = true;
+                visit(ctx.temporalClause());
+            }
+            
             // 处理子查询
             if (ctx.queryExpression() != null) {
                 visit(ctx.queryExpression());
@@ -221,6 +232,23 @@ public class TableLineageExtractor {
                 return;
             }
             sourceTables.add(tableName);
+        }
+        
+        /**
+         * 窗口 TVF：首个实参是真正的输入表，其余实参（时间列、INTERVAL 窗口大小）不产生表依赖
+         */
+        @Override
+        public Void visitTvfFunction(FlinkSqlParser.TvfFunctionContext ctx) {
+            if (ctx.tablePath() != null) {
+                addSourceTable(extractTableName(ctx.tablePath()));
+            }
+            
+            String funcName = ctx.functionName() == null ? null : ctx.functionName().getText().toUpperCase();
+            if (isWindowFunction(funcName)) {
+                hasWindowFunc = true;
+            }
+            
+            return null;
         }
         
         @Override

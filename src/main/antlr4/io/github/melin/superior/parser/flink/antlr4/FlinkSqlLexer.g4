@@ -104,6 +104,19 @@ KW_MAP: [Mm][Aa][Pp];
 // TVF (Table-valued Functions) - Flink 特有
 // ============================================
 
+// 时态表 JOIN 与时间间隔字面量
+KW_FOR: [Ff][Oo][Rr];
+KW_OF: [Oo][Ff];
+KW_SYSTEM_TIME: [Ss][Yy][Ss][Tt][Ee][Mm] '_' [Tt][Ii][Mm][Ee];
+KW_INTERVAL: [Ii][Nn][Tt][Ee][Rr][Vv][Aa][Ll];
+KW_SECOND: [Ss][Ee][Cc][Oo][Nn][Dd];
+KW_MINUTE: [Mm][Ii][Nn][Uu][Tt][Ee];
+KW_HOUR: [Hh][Oo][Uu][Rr];
+KW_DAY: [Dd][Aa][Yy];
+KW_MONTH: [Mm][Oo][Nn][Tt][Hh];
+KW_QUARTER: [Qq][Uu][Aa][Rr][Tt][Ee][Rr];
+KW_YEAR: [Yy][Ee][Aa][Rr];
+
 
 // ============================================
 // 函数关键字

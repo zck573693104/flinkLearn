@@ -92,7 +92,7 @@ columnList
     ;
 
 columnDef
-    : STAR
+    : MULT
     | expression (alias)?
     ;
 
@@ -256,26 +256,6 @@ functionCall
 
 castExpression
     : KW_CAST LPAREN expression KW_AS dataType RPAREN
-    ;
-
-binaryExpression
-    : expression operator expression
-    ;
-
-betweenExpression
-    : expression KW_NOT? KW_BETWEEN expression KW_AND expression
-    ;
-
-inExpression
-    : expression (KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN 
-                 | LPAREN queryExpression RPAREN)
-    ;
-
-operator
-    : PLUS | MINUS | MULT | DIV | MOD
-    | EQ | NEQ | LT | GT | LTE | GTE
-    | KW_AND | KW_OR
-    | ARROW
     ;
 
 literal

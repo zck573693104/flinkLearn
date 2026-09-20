@@ -216,12 +216,10 @@ SEMICOLON: ';';
 AT: '@';
 EXCLAMATION: '!';
 QUESTION: '?';
-STAR: '*';
 AMPERSAND: '&';
 BAR: '|';
 CARET: '^';
 TILDE: '~';
-SLASH: '/';
 BACKSLASH: '\\';
 BACKTICK: '`';
 

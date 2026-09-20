@@ -78,7 +78,7 @@ columnList
     ;
 
 columnDef
-    : STAR
+    : MULT
     | expression (alias)?
     ;
 
@@ -193,7 +193,7 @@ expression
     | expression KW_NOT? KW_LIKE expression
     | (PLUS | MINUS) expression
     | expression (PLUS | MINUS | MULT | DIV | MOD) expression
-    | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT) expression
+    | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT | ARROW) expression
     | expression KW_AND expression
     | expression KW_OR expression
     | KW_NOT expression
@@ -230,19 +230,6 @@ castExpression
     : KW_CAST LPAREN expression KW_AS dataType RPAREN
     ;
 
-binaryExpression
-    : expression operator expression
-    ;
-
-betweenExpression
-    : expression KW_NOT? KW_BETWEEN expression KW_AND expression
-    ;
-
-inExpression
-    : expression (KW_NOT? KW_IN LPAREN expression (COMMA expression)* RPAREN 
-                 | LPAREN queryExpression RPAREN)
-    ;
-
 caseExpression
     : KW_CASE expression? whenClause+ (KW_ELSE elseClause)? KW_END
     | KW_CASE KW_WHEN condition KW_THEN result (KW_WHEN condition KW_THEN result)+ (KW_ELSE elseClause)? KW_END
@@ -262,13 +249,6 @@ result
 
 elseClause
     : expression
-    ;
-
-operator
-    : PLUS | MINUS | MULT | DIV | MOD
-    | EQ | NEQ | LT | GT | LTE | GTE
-    | KW_AND | KW_OR
-    | ARROW
     ;
 
 literal
