@@ -354,26 +354,7 @@
         </dependency>
 
 
-        <dependency>
-            <groupId>io.github.melin.superior</groupId>
-            <artifactId>superior-spark-parser</artifactId>
-            <version>4.0.16</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.melin.superior</groupId>
-            <artifactId>superior-flink-parser</artifactId>
-            <version>4.0.16</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.melin.superior</groupId>
-            <artifactId>superior-presto-parser</artifactId>
-            <version>4.0.16</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.melin.superior</groupId>
-            <artifactId>superior-mysql-parser</artifactId>
-            <version>4.0.16</version>
-        </dependency>
+
 
         <!-- JUnit 5 for unit testing -->
         <dependency>
