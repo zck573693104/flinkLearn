@@ -1,8 +1,7 @@
 package com.bigdata.lineage.service;
 
 import com.bigdata.lineage.model.TableLineage;
-import com.bigdata.lineage.parser.FlinkSQLLineageExtractor;
-import com.bigdata.lineage.parser.FlinkSQLLineageExtractor.TableLineageResult;
+import com.bigdata.lineage.parser.MultiEngineSQLLineageParser;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -20,10 +19,11 @@ import java.util.Set;
 public class TableLineageService {
     
     private final Map<String, List<TableLineage>> lineageCache = new HashMap<>();
+    private final MultiEngineSQLLineageParser lineageParser = new MultiEngineSQLLineageParser();
     private Long nextId = 1L;
     
     /**
-     * 记录血缘关系
+     * 记录血缘关系（基于 ANTLR4 语法的多引擎解析）
      * 
      * @param jobId Flink 作业 ID
      * @param jobName 作业名称
@@ -32,54 +32,56 @@ public class TableLineageService {
      */
     public TableLineage recordLineage(String jobId, String jobName, String sql) {
         try {
-            // 使用解析器提取血缘信息
-            FlinkSQLLineageExtractor extractor = new FlinkSQLLineageExtractor();
-            List<TableLineageResult> results = extractor.extractTableLineages(sql);
+            List<com.bigdata.lineage.parser.model.TableLineage> results =
+                    lineageParser.extractTableLineages(sql);
             
             if (results.isEmpty()) {
                 log.warn("Cannot extract lineage from SQL: {}", sql);
                 return null;
             }
             
-            // 取第一个结果构建血缘记录（通常 INSERT INTO 只有一个目标表）
-            TableLineageResult result = results.get(0);
-            Set<String> sourceTables = result.getSourceTables();
-            String targetTable = result.getTargetTable();
+            // 对于多语句/多源表场景，创建多个血缘记录
+            List<TableLineage> lineages = new ArrayList<>();
+            for (com.bigdata.lineage.parser.model.TableLineage result : results) {
+                String targetTable = result.getTargetTable();
+                Set<String> sourceTables = result.getSourceTables();
+                if (sourceTables == null || sourceTables.isEmpty() || targetTable == null) {
+                    continue;
+                }
+                
+                for (String sourceTable : sourceTables) {
+                    TableLineage lineage = TableLineage.builder()
+                            .id(nextId++)
+                            .jobId(jobId)
+                            .jobName(jobName)
+                            .sql(sql)
+                            .sourceTable(sourceTable)
+                            .targetTable(targetTable)
+                            .processType(result.getProcessType())
+                            .confidence(result.getConfidence())
+                            .hasCte(result.isHasCte())
+                            .hasTemporalJoin(result.isHasTemporalJoin())
+                            .hasWindowFunc(result.isHasWindowFunc())
+                            .createTime(LocalDateTime.now())
+                            .build();
+                    
+                    // 缓存血缘关系
+                    cacheLineage(lineage);
+                    
+                    log.info("Recorded lineage: {} -> {} (Job: {}, Type: {}, Confidence: {})", 
+                            sourceTable, targetTable, jobId, lineage.getProcessType(), 
+                            lineage.getConfidence());
+                    
+                    lineages.add(lineage);
+                }
+            }
             
-            if (sourceTables.isEmpty() || targetTable == null) {
+            if (lineages.isEmpty()) {
                 log.warn("Cannot extract complete lineage from SQL: {}", sql);
                 return null;
             }
             
-            // 对于多源表场景，创建多个血缘记录
-            List<TableLineage> lineages = new ArrayList<>();
-            for (String sourceTable : sourceTables) {
-                TableLineage lineage = TableLineage.builder()
-                        .id(nextId++)
-                        .jobId(jobId)
-                        .jobName(jobName)
-                        .sql(sql)
-                        .sourceTable(sourceTable)
-                        .targetTable(targetTable)
-                        .processType(result.getProcessType())
-                        .confidence(result.getConfidence())
-                        .hasCte(result.isHasCte())
-                        .hasTemporalJoin(result.isHasTemporalJoin())
-                        .hasWindowFunc(result.isHasWindowFunc())
-                        .createTime(LocalDateTime.now())
-                        .build();
-                
-                // 缓存血缘关系
-                cacheLineage(lineage);
-                
-                log.info("Recorded lineage: {} -> {} (Job: {}, Type: {}, Confidence: {})", 
-                        sourceTable, targetTable, jobId, lineage.getProcessType(), 
-                        lineage.getConfidence());
-                
-                lineages.add(lineage);
-            }
-            
-            return lineages.size() == 1 ? lineages.get(0) : lineages.get(0); // 返回第一个作为代表
+            return lineages.get(0); // 返回第一个作为代表
             
         } catch (Exception e) {
             log.error("Failed to record lineage for SQL: {}", sql, e);
