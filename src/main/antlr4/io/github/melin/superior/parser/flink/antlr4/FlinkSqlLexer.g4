@@ -28,8 +28,6 @@ KW_CREATE: [Cc][Rr][Ee][Aa][Tt][Ee];
 KW_TABLE: [Tt][Aa][Bb][Ll][Ee];
 KW_VIEW: [Vv][Ii][Ee][Ww];
 KW_CAST: [Cc][Aa][Ss][Tt];
-KW_FUNCTION: [Ff][Uu][Nn][Cc][Tt][Ii][Oo][Nn];
-KW_WINDOW: [Ww][Ii][Nn][Dd][Oo][Ww];
 KW_DISTINCT: [Dd][Ii][Ss][Tt][Ii][Nn][Cc][Tt];
 KW_ALL: [Aa][Ll][Ll];
 KW_TRUE: [Tt][Rr][Uu][Ee];
@@ -39,13 +37,9 @@ KW_NOT: [Nn][Oo][Tt];
 KW_AND: [Aa][Nn][Dd];
 KW_OR: [Oo][Rr];
 KW_IS: [Ii][Ss];
-KW_FOR: [Ff][Oo][Rr];
 KW_PARTITION: [Pp][Aa][Rr][Tt][Ii][Tt][Ii][Oo][Nn];
 KW_PRIMARY: [Pp][Rr][Ii][Mm][Aa][Rr][Yy];
 KW_KEY: [Kk][Ee][Yy];
-KW_CONSTRAINT: [Cc][Oo][Nn][Ss][Tt][Rr][Aa][Ii][Nn][Tt];
-KW_UNIQUE: [Uu][Nn][Ii][Qq][Uu][Ee];
-KW_REFERENCES: [Rr][Ee][Ff][Ee][Rr][Ee][Nn][Cc][Ee][Ss];
 KW_DEFAULT: [Dd][Ee][Ff][Aa][Uu][Ll][Tt];
 KW_COMMENT: [Cc][Oo][Mm][Mm][Ee][Nn][Tt];
 KW_PRIMARY_KEY: [Pp][Rr][Ii][Mm][Aa][Rr][Yy] [Kk][Ee][Yy];
@@ -67,6 +61,7 @@ KW_CROSS: [Cc][Rr][Oo][Ss][Ss];
 KW_ASC: [Aa][Ss][Cc];
 KW_DESC: [Dd][Ee][Ss][Cc];
 KW_OVER: [Oo][Vv][Ee][Rr];
+KW_LIKE: [Ll][Ii][Kk][Ee];
 KW_TEMPORARY: [Tt][Ee][Mm][Pp][Oo][Rr][Aa][Rr][Yy];
 KW_TEMP: [Tt][Ee][Mm][Pp];
 KW_IF: [Ii][Ff];
@@ -104,28 +99,16 @@ KW_VARBINARY: [Vv][Aa][Rr][Bb][Ii][Nn][Aa][Rr][Yy];
 KW_ARRAY: [Aa][Rr][Rr][Aa][Yy];
 KW_MAP: [Mm][Aa][Pp];
 // KW_ROW: 已在第 56 行定义
-KW_ANY: [Aa][Nn][Yy];
 
 // ============================================
 // TVF (Table-valued Functions) - Flink 特有
 // ============================================
 
-KW_TUMBLE: [Tt][Uu][Mm][Bb][Ll][Ee];
-KW_HOP: [Hh][Oo][Pp];
-KW_SESSION: [Ss][Ee][Ss][Ss][Ii][Oo][Nn];
-KW_CUMULATE: [Cc][Uu][Mm][Uu][Ll][Aa][Tt][Ee];
-KW_FLOOR: [Ff][Ll][Oo][Oo][Rr];
-KW_TRIGGER: [Tt][Rr][Ii][Gg][Gg][Ee][Rr];
 
 // ============================================
 // 函数关键字
 // ============================================
 
-KW_CURRENT_TIMESTAMP: 'CURRENT_TIMESTAMP';
-KW_CURRENT_DATE: 'CURRENT_DATE';
-KW_CURRENT_TIME: 'CURRENT_TIME';
-KW_LOCALTIME: [Ll][Oo][Cc][Aa][Ll][Tt][Ii][Mm][Ee];
-KW_LOCALTIMESTAMP: [Ll][Oo][Cc][Aa][Ll][Tt][Ii][Mm][Ee][Ss][Tt][Aa][Mm][Pp];
 
 // ============================================
 // 标识符

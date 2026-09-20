@@ -72,10 +72,15 @@ cteDefinition
 
 queryExpression
     : selectClause fromClause? whereClause? groupByClause? havingClause? 
-      orderByClause? limitClause? windowClause? pivotClause?
+      distributeClause? orderByClause? distributeClause? limitClause? windowClause? pivotClause?
       (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_EXCEPT (KW_DISTINCT | KW_ALL)? queryExpression)*
+    ;
+
+// Hive/Spark 特有：DISTRIBUTE BY / CLUSTER BY / SORT BY 控制数据分发与排序
+distributeClause
+    : (KW_DISTRIBUTE | KW_CLUSTER | KW_SORT) KW_BY columnList
     ;
 
 selectClause
@@ -208,6 +213,8 @@ columnNameList
 expression
     : expression LBRACKET expression RBRACKET
     | expression DOT uid
+    | expression KW_OVER LPAREN windowDefinition RPAREN
+    | expression KW_NOT? KW_LIKE expression
     | (PLUS | MINUS) expression
     | expression (PLUS | MINUS | MULT | DIV | MOD) expression
     | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT | ARROW) expression
@@ -317,12 +324,15 @@ alias
     : KW_AS? uid
     ;
 
+// 函数名一律走 uid；只有同时充当子句关键字的词（IF/LEFT/RIGHT/FIRST/LAST/LATERAL VIEW）需显式放行
 functionName
     : uid
     | KW_IF
     | KW_LEFT
     | KW_RIGHT
-    | KW_EXPLODE
+    | KW_LATERAL_VIEW
+    | KW_FIRST
+    | KW_LAST
     ;
 
 cteName

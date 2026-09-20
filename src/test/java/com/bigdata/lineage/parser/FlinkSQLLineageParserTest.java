@@ -1,5 +1,6 @@
 package com.bigdata.lineage.parser;
 
+import com.bigdata.lineage.parser.extractor.TableLineageExtractor;
 import com.bigdata.lineage.parser.model.TableLineage;
 import org.junit.Assert;
 import org.junit.Before;
@@ -201,5 +202,51 @@ public class FlinkSQLLineageParserTest {
         
         // 结果应该相同
         Assert.assertEquals("Results should be equal", result1.size(), result2.size());
+    }
+
+    /**
+     * 语料暴露的语法点：窗口函数 OVER(PARTITION BY ... ORDER BY ...) 与 LIKE。
+     * 直接走 extractor 断言 parseError，防止 grammar 回退后靠错误恢复蒙混过关
+     */
+    @Test
+    public void testWindowFunctionAndLikeParseWithoutError() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_win SELECT lag(amount) OVER (PARTITION BY user_id ORDER BY dt) AS prev, "
+                        + "row_number() OVER (PARTITION BY id) AS rn "
+                        + "FROM ods.src_win WHERE name LIKE '%外请%'");
+
+        Assert.assertFalse("窗口函数/LIKE 不应产生解析错误", lineage.isParseError());
+        Assert.assertEquals("dwd.t_win", lineage.getTargetTable());
+        Assert.assertEquals(java.util.Set.of("ods.src_win"), lineage.getSourceTables());
+        Assert.assertTrue(lineage.isHasWindowFunc());
+    }
+
+    /**
+     * 多层 CTE + 窗口函数：CTE 名必须是临时名，不得泄漏成输入表
+     */
+    @Test
+    public void testMultiCteChainNeverLeaksCteNames() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "WITH v_a AS (SELECT id, dt FROM ods.src_a), "
+                        + "v_b AS (SELECT lag(id) OVER (PARTITION BY dt ORDER BY id) AS p FROM v_a) "
+                        + "INSERT INTO dwd.t_multi SELECT p FROM v_b JOIN ods.src_d ON v_b.p = ods.src_d.id");
+
+        Assert.assertFalse("CTE 链不应产生解析错误", lineage.isParseError());
+        Assert.assertEquals("dwd.t_multi", lineage.getTargetTable());
+        Assert.assertEquals(java.util.Set.of("ods.src_a", "ods.src_d"), lineage.getSourceTables());
+    }
+
+    /**
+     * 词法层守护：name/level/type 这类常见列名必须是普通标识符，
+     * 不能被登记成关键字，否则错误恢复会让列名泄漏成输入表
+     */
+    @Test
+    public void testCommonColumnNamesArePlainIdentifiers() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_id SELECT name, level, type, source, owner, state "
+                        + "FROM ods.src_id WHERE name LIKE '%x%' AND level > 1");
+
+        Assert.assertFalse("常见列名不得被词法保留", lineage.isParseError());
+        Assert.assertEquals(java.util.Set.of("ods.src_id"), lineage.getSourceTables());
     }
 }

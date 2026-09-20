@@ -94,6 +94,61 @@ class SparkPrestoDialectLineageTest {
                 "dwd.t_pos", "ods.src_pos");
     }
 
+    @Test
+    void sparkWindowFunctionOverPartitionByOrderBy() {
+        TableLineage lineage = spark.extractFromSql(
+                "INSERT INTO dwd.t_win SELECT lag(amount) OVER (PARTITION BY user_id ORDER BY dt) AS prev "
+                        + "FROM ods.src_win");
+        assertFalse(lineage.isParseError(), "窗口函数语法不应产生解析错误");
+        assertEquals("dwd.t_win", lineage.getTargetTable());
+        assertEquals(java.util.Set.of("ods.src_win"), lineage.getSourceTables());
+        assertTrue(lineage.isHasWindowFunc());
+    }
+
+    @Test
+    void sparkLikeWithPercentWildcardAndChinese() {
+        assertSparkLineage(
+                "INSERT INTO dwd.t_like SELECT a FROM ods.src_like "
+                        + "WHERE name LIKE '%外请%' AND code NOT LIKE '测试%'",
+                "dwd.t_like", "ods.src_like");
+    }
+
+    @Test
+    void sparkDistributeByAfterJoin() {
+        assertSparkLineage(
+                "INSERT OVERWRITE TABLE dwd.t_dist SELECT t1.id FROM ods.src_a t1 "
+                        + "JOIN ods.src_b t2 ON t1.id = t2.id DISTRIBUTE BY t1.dt",
+                "dwd.t_dist", "ods.src_a", "ods.src_b");
+    }
+
+    @Test
+    void sparkBuiltinFunctionNamesArePlainIdentifiers() {
+        TableLineage lineage = spark.extractFromSql(
+                "INSERT INTO dwd.t_func SELECT substr(name, 1, 3), md5(id), concat_ws(',', a, b), "
+                        + "get_json_object(j, '$.k'), to_json(named_struct('k', v)), "
+                        + "regexp_extract(s, '(a)(b)', 1), count(1) OVER (PARTITION BY id) "
+                        + "FROM ods.src_func");
+        assertFalse(lineage.isParseError(), "内置函数名应可作为普通标识符解析");
+        assertEquals(java.util.Set.of("ods.src_func"), lineage.getSourceTables());
+    }
+
+    /**
+     * 语料暴露的核心缺陷：多层 CTE + 窗口函数 + LIKE 混排时，
+     * 语法缺口会让 ANTLR 错误恢复吞掉 WITH 块，CTE 名泄漏成输入表
+     */
+    @Test
+    void sparkMultiCteChainNeverLeaksCteNames() {
+        TableLineage lineage = spark.extractFromSql(
+                "WITH v_a AS (SELECT id, dt FROM ods.src_a), "
+                        + "v_b AS (SELECT lag(id) OVER (PARTITION BY dt ORDER BY id) AS p, dt FROM v_a), "
+                        + "v_c AS (SELECT p AS id, dt FROM v_b WHERE dt LIKE '%2024%') "
+                        + "INSERT OVERWRITE TABLE dwd.t_multi SELECT id FROM v_c "
+                        + "JOIN ods.src_d ON v_c.id = ods.src_d.id");
+        assertFalse(lineage.isParseError(), "CTE 链不应产生解析错误");
+        assertEquals("dwd.t_multi", lineage.getTargetTable());
+        assertEquals(java.util.Set.of("ods.src_a", "ods.src_d"), lineage.getSourceTables());
+    }
+
     // ============================================
     // Presto 方言
     // ============================================
@@ -138,6 +193,39 @@ class SparkPrestoDialectLineageTest {
         TableLineage lineage = presto.extractFromSql("USE my_catalog.my_schema");
         assertTrue(lineage.getTargetTable() == null || lineage.getTargetTable().isEmpty());
         assertTrue(lineage.getSourceTables() == null || lineage.getSourceTables().isEmpty());
+    }
+
+    @Test
+    void prestoWindowFunctionOverAndLike() {
+        TableLineage lineage = presto.extractFromSql(
+                "INSERT INTO dwd.t_win SELECT lag(amount) OVER (PARTITION BY user_id ORDER BY dt) AS prev "
+                        + "FROM ods.src_win WHERE name LIKE '%外请%'");
+        assertFalse(lineage.isParseError(), "Presto 窗口函数/LIKE 应可解析");
+        assertEquals("dwd.t_win", lineage.getTargetTable());
+        assertEquals(java.util.Set.of("ods.src_win"), lineage.getSourceTables());
+    }
+
+    @Test
+    void prestoBuiltinFunctionNamesArePlainIdentifiers() {
+        TableLineage lineage = presto.extractFromSql(
+                "INSERT INTO dwd.t_func SELECT substr(name, 1, 3), concat_ws(',', a, b), "
+                        + "regexp_extract(s, '(a)(b)', 1), cardinality(arr) FROM ods.src_func");        assertFalse(lineage.isParseError(), "内置函数名应可作为普通标识符解析");
+        assertEquals(java.util.Set.of("ods.src_func"), lineage.getSourceTables());
+    }
+
+    /**
+     * 词法层守护：只有解析器真正用到的词才允许登记为关键字。
+     * name/level/type/source/owner/state 这类常见列名必须是普通标识符，
+     * 否则 ANTLR 错误恢复会吞掉整个语句，CTE 名与列名泄漏成输入表
+     */
+    @Test
+    void commonColumnNamesArePlainIdentifiers() {
+        String sql = "INSERT INTO dwd.t_id SELECT name, level, type, source, owner, state "
+                + "FROM ods.src_id WHERE name LIKE '%x%' AND level > 1";
+        for (TableLineage lineage : new TableLineage[]{spark.extractFromSql(sql), presto.extractFromSql(sql)}) {
+            assertFalse(lineage.isParseError(), "常见列名不得被词法保留: " + lineage.getOriginalSql());
+            assertEquals(java.util.Set.of("ods.src_id"), lineage.getSourceTables());
+        }
     }
 
     // ============================================

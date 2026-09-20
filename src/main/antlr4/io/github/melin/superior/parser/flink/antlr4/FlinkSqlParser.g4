@@ -163,6 +163,8 @@ columnNameList
 expression
     : expression LBRACKET expression RBRACKET
     | expression DOT uid
+    | expression KW_OVER LPAREN windowDefinition RPAREN
+    | expression KW_NOT? KW_LIKE expression
     | (PLUS | MINUS) expression
     | expression (PLUS | MINUS | MULT | DIV | MOD) expression
     | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT) expression

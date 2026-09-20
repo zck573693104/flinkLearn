@@ -189,6 +189,8 @@ columnNameList
 expression
     : expression LBRACKET expression RBRACKET
     | expression DOT uid
+    | expression KW_OVER LPAREN windowDefinition RPAREN
+    | expression KW_NOT? KW_LIKE expression
     | (PLUS | MINUS) expression
     | expression (PLUS | MINUS | MULT | DIV | MOD) expression
     | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT) expression
@@ -322,6 +324,7 @@ alias
     : KW_AS? uid
     ;
 
+// 函数名一律走 uid；只有同时充当子句关键字的词（IF/LEFT/RIGHT）需显式放行
 functionName
     : uid
     | KW_IF
