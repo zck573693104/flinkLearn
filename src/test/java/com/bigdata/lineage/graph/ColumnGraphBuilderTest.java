@@ -116,6 +116,22 @@ class ColumnGraphBuilderTest {
         assertEquals(4, graph.tableCountWithColumns());
     }
 
+    /** 「有字段的表」只数物理表：派生关系个个带列，混进来会得出比表总数还多的口径 */
+    @Test
+    void columnBearingCountSkipsStatementLocalRelations() {
+        LineageGraph graph = graphOf("INSERT INTO dws.one "
+                + "WITH c1 AS (SELECT id FROM ods.a), c2 AS (SELECT id FROM c1) SELECT id FROM c2");
+        int local = 0;
+        for (GraphNode node : graph.getNodes().values()) {
+            if (node.isLocal()) {
+                assertFalse(node.getColumns().isEmpty(), "前提：CTE 节点确实带列，否则钉不住口径");
+                local++;
+            }
+        }
+        assertEquals(2, local, "两条 CTE 各成一个节点");
+        assertEquals(2, graph.tableCountWithColumns(), "只该数到 ods.a 与 dws.one");
+    }
+
     /** 增量表自依赖：环要标出来，两端同层，边仍然成环 */
     @Test
     void selfDependencyBecomesACyclicTableNotAMissingEdge() {

@@ -120,11 +120,16 @@ public final class LineageGraph {
         return hit == null ? NO_TABLE_LINKS : Collections.unmodifiableList(hit);
     }
 
-    /** 有字段级边的表数：UI 用它区分"能展字段"与"只有表级线" */
+    /**
+     * 有字段级边的物理表数：UI 用它区分"能展字段"与"只有表级线"。
+     *
+     * <p>只数物理表，与 {@code tableCount} 同口径。语句内派生关系几乎必带列，
+     * 把它们算进来会得出"有字段的表比表还多"。
+     */
     public int tableCountWithColumns() {
         Set<String> withColumns = new LinkedHashSet<>();
         for (GraphNode node : nodes.values()) {
-            if (!node.getColumns().isEmpty()) {
+            if (node.isPhysical() && !node.getColumns().isEmpty()) {
                 withColumns.add(node.getId());
             }
         }

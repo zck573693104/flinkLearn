@@ -44,7 +44,7 @@ MAVEN_OPTS=-Dfile.encoding=UTF-8 mvn -o compile \
 **不需要任何数据库、消息队列或 npm 构建步骤**：血缘结果只存在进程内的不可变快照里，启动时扫一遍 SQL 目录（`POST /api/scan` 可随时换快照）。机器上没有 MySQL 也能跑完全部功能。
 
 ```bash
-mvn -o clean package             # 254 用例 + 可执行 jar
+mvn -o clean package             # 255 用例 + 可执行 jar
 java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar                # 默认扫描 ./sql
 java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar --lineage.scan-dir=D:\dw\sql
 ```

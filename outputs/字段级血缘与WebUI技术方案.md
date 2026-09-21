@@ -662,6 +662,10 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - `sql/` 公开语料：2376 原始列边不变，图列边 2329→2327（`current_timestamp` 假来源 4 处），0 告警、0 泄漏、0 未解析、17 节点/6 表边/maxLayer 1 全不变。
 - `mvn -o clean test` **252 绿**（M4 收尾 246 + 套别名 1 + Spark 无参/lambda/形参遮蔽 3 + Presto lambda/括号形式 2）。
 
+同一份涉密语料在 `lineage-only-webui` 分支上的复测（2026-09-21 收尾）：16 文件 / 38 语句 / **0 解析错误**，269 节点（185 语句内关系 + 84 物理表）、原始列边 4012、图列边 3951、表边 112、maxLayer 5、UNRESOLVED 2、环上表 1，四类泄漏探针与逐文件双向引用巡检（"文本里引用的表" ↔ "报告输出的表"）**丢 0 / 多 0**——与上面逐项相等，删 Flink 代码与后续 Web 改动没动到血缘。
+
+**只有大语料才暴露的口径缺陷**：顶栏当时显示 `表 84（261 张有字段）`，261 > 84 是因为 `LineageGraph.tableCountWithColumns()` 遍历全部节点，把 185 个语句内关系一起数了进来，而 `tableCount` 只数物理表，两个数不同口径。现改为 `isPhysical()` 且带列才计数，`columnBearingCountSkipsStatementLocalRelations` 钉住（去掉 `isPhysical()` 守卫该用例从 2 变 4，不是空断言）。合成小语料真浏览器实测：`表 5（5 张有字段）· 中间关系 4`，同一份数据修前会显示 `9 张有字段`。
+
 巡检口径的两条教训（比数字更有价值）：
 
 - **"未折叠的伪节点"必须是 0 才算过关**这条此前是假绿：它按节点 id 里有没有 `#` 判定，而别名登记的子查询根本没有 `#`，于是报 0 的同时 62 次折叠失败无人看见。
@@ -694,7 +698,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **254/254** + boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
+- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **255/255**（M6 收尾 254 + 「有字段的表」只数物理表 1，见 §11.1）+ boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
 - [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。**像素级观感仍待人眼过一遍**（验证用的 in-app Browser 是 0x0 视口，只能读结构与文本）。
 - [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
 - [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。
