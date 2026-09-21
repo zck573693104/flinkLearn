@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -84,6 +85,39 @@ class CorpusScannerTest {
         assertThrows(IllegalArgumentException.class, () -> scanner.rescan(dir.resolve("nope").toString()));
         assertTrue(store.graph().getNodes().containsKey("dwd.t"), "坏目录不能把已扫到的血缘清掉");
         assertTrue(store.current().sqlOf("a.sql#1").contains("ods.src"));
+    }
+
+    /** 启动扫描失败不能让页面只剩"什么都没有"：原因得能经 /api/overview 走到前端告警条 */
+    @Test
+    void aFailedStartupScanKeepsTheReasonForTheUi() throws IOException {
+        LineageProperties properties = new LineageProperties();
+        properties.setScanDir(dir.resolve("nope").toString());
+        CorpusScanner scanner = new CorpusScanner(store, properties);
+
+        assertEquals("running", scanner.getScanPhase(), "端口先于扫描就绪，初始就得是 running");
+        scanner.run(null);   // run 只读配置，不读命令行参数
+
+        assertTrue(scanner.getScanError().contains("目录不存在"), "空快照要带上为什么是空的");
+        assertEquals("failed", scanner.getScanPhase());
+        assertTrue(store.current().isEmpty(), "降级不阻断：服务照样起，只是没数据");
+
+        write("a.sql", "INSERT INTO dwd.t SELECT id FROM ods.src;");
+        scanner.rescan(dir.toString());
+        assertNull(scanner.getScanError(), "扫成功就不能留着上一次的告警");
+        assertEquals("ready", scanner.getScanPhase(), "页面据此停止轮询、收起告警条");
+    }
+
+    /** 显式跳过启动扫描时别把页面吊在"还在扫"上 */
+    @Test
+    void skippingTheStartupScanIsItsOwnPhase() {
+        LineageProperties properties = new LineageProperties();
+        properties.setRescanOnStart(false);
+        CorpusScanner scanner = new CorpusScanner(store, properties);
+
+        scanner.run(null);
+
+        assertEquals("skipped", scanner.getScanPhase());
+        assertNull(scanner.getScanError());
     }
 
     /** 显式传目录时以参数为准：WebUI 的「换个目录重扫」靠这个；空目录就是把快照换空 */

@@ -57,6 +57,8 @@ public class LineageApiController {
         ScanReport report = snapshot.getReport();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("source", snapshot.getSource());
+        data.put("scanPhase", scanner.getScanPhase());
+        data.put("scanError", scanner.getScanError());
         data.put("durationMillis", snapshot.getDurationMillis());
         data.put("fileCount", report.getFileCount());
         data.put("statementCount", report.getStatementCount());

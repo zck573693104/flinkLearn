@@ -44,12 +44,14 @@ MAVEN_OPTS=-Dfile.encoding=UTF-8 mvn -o compile \
 **不需要任何数据库、消息队列或 npm 构建步骤**：血缘结果只存在进程内的不可变快照里，启动时扫一遍 SQL 目录（`POST /api/scan` 可随时换快照）。机器上没有 MySQL 也能跑完全部功能。
 
 ```bash
-mvn -o clean package             # 252 用例 + 可执行 jar
+mvn -o clean package             # 254 用例 + 可执行 jar
 java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar                # 默认扫描 ./sql
 java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar --lineage.scan-dir=D:\dw\sql
 ```
 
 打开 `http://localhost:8080`。图渲染用的 Cytoscape / dagre 已经 vendor 进 `src/main/resources/static/vendor/`（见该目录 `README.md` 的版本与来源），**没有 CDN、没有 npm 构建步骤**，内网离线可用。
+
+页面如果什么都没有，顶栏下面的横幅会直接说明是哪一种：语料还在扫（端口比扫描先就绪，页面会自己等到大图出现）、目录指错（`--lineage.scan-dir` 是相对路径时按**服务进程的工作目录**解析）、还是目录里确实没有 `.sql`。后两种可以在顶栏「语料目录」填绝对路径点「重扫目录」当场换过来，不必重启。
 
 只想要接口不要页面的话：`GET /api/overview`、`/api/tables`、`/api/graph/table`、`/api/graph/column`、`/api/table/{t}/columns`、`/api/edge/column`、`/api/issues` 全部只读，`POST /api/parse` 收一段 SQL 返回试解析结果（不落快照），`POST /api/scan` 是唯一会换快照的写操作（可带 `{"dir":"..."}`）。契约与字段口径写在方案 §7.3。
 

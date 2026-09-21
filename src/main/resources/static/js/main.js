@@ -36,6 +36,8 @@ const ui = {
   parseSql: document.getElementById('parse-sql'),
   parseOut: document.getElementById('parse-out'),
   legend: document.getElementById('legend'),
+  scanError: document.getElementById('scan-error'),
+  scanDir: document.getElementById('scan-dir'),
 };
 
 const state = {
@@ -102,7 +104,48 @@ async function loadOverview() {
     ui.overview.appendChild(div);
   });
   fillLayerFilter(data.maxLayer);
+  showScanError(data);
   return data;
+}
+
+/**
+ * 顶栏下面的告警条。空快照不会自己解释自己，而这几种"什么都没有"必须分清：
+ * 还在扫（正常，等就好）、扫失败了（目录指错了）、扫到 0 个文件（目录对但没语料）、压根没扫。
+ */
+function showScanError(data) {
+  const hint = '相对路径按服务进程的工作目录解析：可在顶栏「语料目录」填绝对路径再点「重扫目录」，'
+    + '或用 --lineage.scan-dir=<绝对路径> 起服务。';
+  let text;
+  let info = false;
+  if (data.scanError) {
+    text = `启动时没扫成：${data.scanError}。${hint}`;
+  } else if (data.scanPhase === 'running') {
+    info = true;
+    text = '语料还在扫（端口先于扫描就绪，属正常），扫完自动出图。';
+  } else if (data.scanPhase === 'skipped') {
+    info = true;
+    text = '已按 lineage.rescan-on-start=false 跳过启动扫描，在顶栏「语料目录」填好路径再点「重扫目录」取数。';
+  } else if (!data.fileCount) {
+    text = `${data.source || '配置的目录'} 里没有 .sql 文件。${hint}`;
+  } else {
+    text = '';
+  }
+  ui.scanError.hidden = !text;
+  ui.scanError.textContent = text;
+  ui.scanError.classList.toggle('info', info);
+}
+
+/** 扫描没落地前不要把整页当"没有血缘"处理：每 500ms 问一次，最多 60s */
+async function waitScan(data) {
+  let latest = data;
+  for (let i = 0; i < 120 && latest.scanPhase === 'running'; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    latest = await loadOverview();
+  }
+  if (latest.scanPhase === 'running') {
+    ui.scanError.textContent = '语料还没扫完（已等 60 秒），扫完刷新页面或点「重扫目录」。';
+  }
+  return latest;
 }
 
 function fillLayerFilter(maxLayer) {
@@ -112,7 +155,7 @@ function fillLayerFilter(maxLayer) {
   all.value = '';
   all.textContent = '全部';
   ui.layerFilter.appendChild(all);
-  for (let layer = 0; layer <= Math.max(0, maxLayer); layer++) {
+  for (let layer = 0; layer <= maxLayer; layer++) {
     const option = document.createElement('option');
     option.value = String(layer);
     option.textContent = `第 ${layer} 层`;
@@ -482,17 +525,19 @@ ui.direction.addEventListener('change', guard(() => {
   }
 }));
 document.getElementById('rescan').addEventListener('click', guard(async () => {
-  ui.warn.textContent = '正在重扫目录…';
-  const data = await api.scan();
+  const dir = ui.scanDir.value.trim();
+  ui.warn.textContent = `正在重扫${dir || '当前'}目录…`;
+  const data = await api.scan(dir);
   state.table = null;
   state.column = null;
   state.columns = null;
   syncHash();
   await loadOverview();
   await loadTables();
+  await refresh();
   ui.warn.textContent = '';
-  renderEmpty(ui.detail, `重扫完成：${data.fileCount} 文件 / ${data.statementCount} 条语句 / `
-    + `${data.columnEdgeCount} 条字段边，用时 ${data.durationMillis}ms`);
+  renderEmpty(ui.detail, `重扫完成：${data.source} → ${data.fileCount} 文件 / `
+    + `${data.statementCount} 条语句 / ${data.columnEdgeCount} 条字段边，用时 ${data.durationMillis}ms`);
 }));
 document.getElementById('export-png').addEventListener('click', exportPng);
 document.getElementById('export-json').addEventListener('click', exportJson);
@@ -508,7 +553,7 @@ window.addEventListener('hashchange', guard(async () => {
 
 (async function start() {
   readHash();
-  await loadOverview();
+  await waitScan(await loadOverview());
   await loadTables();
   if (state.column && !state.table) {
     const dot = state.column.lastIndexOf('.');

@@ -28,6 +28,7 @@ body {
 .topbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 8px 14px;
   background: var(--panel);
@@ -35,6 +36,25 @@ body {
 }
 
 .topbar h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+
+/* 空快照不会自己解释自己：目录指错了要在这里一句话说明白 */
+.banner {
+  margin: 0;
+  padding: 7px 14px;
+  background: #fdecea;
+  border-bottom: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.banner[hidden] { display: none; }
+
+/* "还在扫"不是错误，别用红条吓人 */
+.banner.info {
+  background: #eef3fd;
+  border-bottom-color: var(--accent);
+  color: #1f4ea0;
+}
 
 .stats {
   display: flex;
@@ -48,7 +68,8 @@ body {
 .stats dt { color: var(--muted); font-size: 12px; }
 .stats dd { margin: 0; font-weight: 600; }
 
-.tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+/* 窄窗口里工具区自己换行，别把按钮压成竖排字（顶栏已允许 wrap） */
+.tools { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 button {
   font: inherit;
@@ -57,6 +78,7 @@ button {
   background: #fff;
   border-radius: 4px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 button:hover { border-color: var(--accent); color: var(--accent); }
@@ -70,6 +92,8 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   background: #fff;
 }
 .field input[type=number] { width: 52px; }
+/* 语料目录要装得下 Windows 绝对路径；窄窗口下先缩到 120px 再换行 */
+.field input[type=text] { width: 220px; min-width: 120px; }
 
 .grid {
   flex: 1;

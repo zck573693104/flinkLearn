@@ -17,11 +17,16 @@
     <label class="field">深度
       <input id="depth" type="number" min="1" max="8" value="2">
     </label>
+    <label class="field">语料目录
+      <input id="scan-dir" type="text" placeholder="留空=服务配置的 lineage.scan-dir">
+    </label>
     <button id="rescan" type="button">重扫目录</button>
     <button id="export-png" type="button">导出 PNG</button>
     <button id="export-json" type="button">导出 JSON</button>
   </div>
 </header>
+
+<p id="scan-error" class="banner" role="alert" hidden></p>
 
 <main class="grid">
   <aside class="col left">

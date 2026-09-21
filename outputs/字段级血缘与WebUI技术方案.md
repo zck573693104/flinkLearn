@@ -401,7 +401,7 @@ com.bigdata.lineage.graph/
 三条实现期定下来的口径，后续改动别再动摇：
 
 - **jobId = 「相对路径#该文件的血缘语句序号」**（`ck/user_app_data_ck_dml.sql#1`），由 `CorpusScanner` 回写进 `ColumnEdge.jobId`（解析层不填，就是留给调用方的口子），`ColumnGraphBuilder.localName()` 优先采纳它。图构建层默认的内容 SHA-256 只用于 `/api/parse` 这种没有文件上下文的场景。**扫描器必须用 `new MultiEngineSQLLineageParser(false)` 关掉缓存**：缓存返回的是同一批可变 DTO，逐文件回写 jobId 会污染上一轮。
-- **坏目录只报错不换快照**：`rescan` 对不存在的目录抛 `IllegalArgumentException`（API 层回 400），已扫到的血缘留在原处；`run()` 里的启动扫描失败只 warn，服务照样起来跑空快照，方便单独验证静态页。
+- **坏目录只报错不换快照**：`rescan` 对不存在的目录抛 `IllegalArgumentException`（API 层回 400），已扫到的血缘留在原处；`run()` 里的启动扫描失败只 warn，服务照样起来跑空快照，方便单独验证静态页——失败原因与扫描进度记在 `scanError`/`scanPhase`，由 `/api/overview` 下发给页面（§8.5）。
 - **`Snapshot` 额外持有 `jobId → 原文` 索引**，`/api/edge/column` 与 `/api/table/{t}/columns` 据此回显 `sqlText`。账本与图都在扫描期算成不可变值，读侧不保留任何 Lombok 可变 DTO。
 
 配置（`application.yml`，M3 后仍就这三个键，静态资源键不需要加——`src/main/resources/static` 是 Boot 默认映射）：
@@ -419,7 +419,7 @@ lineage:
 
 | 方法 | 路径 | 用途 | 关键参数 |
 |---|---|---|---|
-| GET | `/api/overview` | 统计：文件数/语句数/表数/字段边数/表边数/parseError/UNRESOLVED/STAR/最大层/环 | — |
+| GET | `/api/overview` | 统计：文件数/语句数/表数/字段边数/表边数/parseError/UNRESOLVED/STAR/最大层/环 + `scanPhase`/`scanError`（空快照的自解释，见 §8.5） | — |
 | GET | `/api/tables` | 表列表（含上下游度数、所在层、字段数） | `q`（大小写不敏感**子串**）、`layer`、`onlyUnresolved` |
 | GET | `/api/graph/table` | 表级分层 DAG | `root`（空=全量）、`direction=up\|down\|both`、`depth`（默认 2，上限 8） |
 | GET | `/api/table/{table:.+}/columns` | 该表字段清单 + 每字段直接来源（带证据）与去向 | — |
@@ -480,7 +480,7 @@ lineage:
 
 ```
 src/main/resources/static/
-  index.html                     三栏骨架 + 顶栏统计/工具 + 图头（标题/告警位/方向下拉）
+  index.html                     三栏骨架 + 顶栏统计/工具（深度、语料目录、重扫、两个导出）+ 空快照告警条 + 图头（标题/告警位/方向下拉）
   css/app.css                    单文件；CSS 变量 + derivation 徽标配色 + mark 高亮色
   js/api.js         9 端点封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）
   js/badges.js      derivation 中文提示、层级配色、置信度分档
@@ -548,6 +548,36 @@ src/main/resources/static/
   - UNRESOLVED 侧是**语义谎言**：来源没绑上的边根本进不了图（`ColumnGraphBuilder` 造不出指向 null 的端点），于是字段面板说"没有解析到来源：这是链路起点（源表字段）"，而 `dwd.amb` 明明是 INSERT 目标；`/api/tables?onlyUnresolved=true` 也漏掉它（脏表集合是从图边推的，边已经被丢了）。修法：`ScanReport` 另存 `unresolvedTargets`（目标列标识），读侧据此①把表并进脏表集，②给字段清单下发 `unresolvedSource`，面板改出红条"它是解析缺口，不是链路起点"，字段行挂 `UNRESOLVED` 徽标。顺带把 `/api/issues` 明细里漏出来的 `ColumnRef(...)` Lombok toString 换成裸列名。
   - 复验：临时语料下 `onlyUnresolved` 从 2 张变 3 张（补回 `dwd.amb`），issues 明细变成 `dwd.amb.amount[UNRESOLVED] <- [amount]`，浏览器里红条与徽标都渲染出来；换回 `sql/` 后统计仍是 16/26/3/0/0/17/13/0/2329/6/maxLayer 1，`onlyUnresolved` 空——本语料 0 未解析，与账本自洽。新增 `LineageStoreTest.unresolvedTargetsStayInTheLedgerAfterTheGraphDropsTheirEdges`，`mvn -o clean test` **246 绿**。
 - **仍未验到的**：in-app Browser 没给可见 surface（viewport 0x0），所以像素级观感（节点是否重叠、配色对比度、PNG 成品长什么样）只有模型层断言撑着（dagre 确实跑了：17 节点 x 跨 2029、y 跨 122）。人眼过一遍仍是 §14 的待办。
+
+### 8.5 「页面什么都没有」的三种成因与启动竞态（2026-09-21 修复）
+
+表级/字段级血缘在解析层是好的（CLI `run-lineage.bat sql` 与 `/api/overview` 同一份账本），页面空白却另有其因。逐个排除：
+
+1. **服务没在跑**。上一轮验收结束我 `taskkill` 掉了 8080 进程，浏览器于是连不上。这属操作遗留，不是缺陷。
+2. **语料目录指错**。`lineage.scan-dir` 是相对路径时按**服务进程的工作目录**解析，从别的目录 `java -jar` 就指到了别处 → 顶栏 `0 文件 / 0 语句`，而原因（`目录不存在: …`）只落在服务日志里，页面上一句解释都没有。
+3. **真缺陷：端口先于扫描就绪**。Spring Boot 在 `refreshContext` 阶段就绑定端口开始接受请求，而 `CorpusScanner` 是 `ApplicationRunner`，跑在其后。浏览器只要抢在这段窗口里打开，拿到的就是空快照，且**页面不会自己回头取数**——语料越大窗口越长：`sql/`（15 文件）约 1.5s，仓库外的合成复制语料（12 文件 / 3168 语句 / 49 MB）**39.4s**。第 3 条才是"每次都空白"的那个成因，前两条只是让它更难归因。
+
+修法只加状态、不改时序（把扫描挪到 `ServletContextInitializer` 之前会让启动更慢，且并不解决"空目录"那种永远等不到的情况）：
+
+- `CorpusScanner` 增两个 `volatile` 字段：`scanPhase`（`running` → `ready`/`failed`，`lineage.rescan-on-start=false` 时为 `skipped`）与 `scanError`（启动扫描的失败原因，成功 `rescan` 后清空）。二者经 `/api/overview` 下发。
+- 页面顶部一条 `#scan-error` 横幅（`role=alert`），四态：**红**=`failed`（"启动时没扫成：{原因}"）或 `ready` 但 `fileCount=0`（"{目录} 里没有 .sql 文件"），两者都附一句"相对路径按服务进程的工作目录解析：可在顶栏「语料目录」填绝对路径再点「重扫目录」，或用 `--lineage.scan-dir=<绝对路径>` 起服务"；**蓝**=`running`（"语料还在扫（端口先于扫描就绪，属正常），扫完自动出图"）与 `skipped`；**不出**=`ready` 且有数据。
+- `waitScan()`：`scanPhase === 'running'` 时每 500ms 重问 `/api/overview`，最多 60s（120 次），超时才改口"已等 60 秒，扫完刷新页面或点「重扫目录」"。空快照从此不再伪装成"这份语料没有血缘"。
+
+浏览器实测又揪出 4 个纸面看不出来的缺陷（都已修，最后一条纯观感）：
+
+1. **换目录得靠弹窗，而弹窗在这类页面里根本不可用**。先按 `window.prompt` 实现"重扫换个目录"，页面直接 `TypeError: prompt() is not supported.`（自动化/embedded webview 禁模态框）。改成顶栏一个 `#scan-dir` 文本框 + 原按钮读它的值（留空=服务配置的目录），服务端不用动（`/api/scan` 本来就收 `dir`）。
+2. **重扫成功后图不跟着重画**：handler 只 `loadOverview()+loadTables()`，于是出现过"左栏 14 行、图标题还写着 `全量表级 DAG（0 表 / 0 边）`"的自相矛盾帧 → 补 `await refresh()`。
+3. **窄窗口把工具区压碎**：多出的目录框让 `.tools` 里的按钮缩成 `36x94`（文字竖排）→ `.topbar`/`.tools` 改 `flex-wrap:wrap`、按钮 `white-space:nowrap`；531px 视口下顶栏 516x179、按钮回到 78x31。
+4. **空快照的层过滤有个假选项**：`maxLayer=-1` 时 `fillLayerFilter` 仍画"第 0 层" → 改成按真实 `maxLayer` 收（空快照只剩"全部"，与 §8.2"分层只认图的 rank"口径一致）。
+
+最终一轮实测（browser-use，仓库外临时目录 `D:/tmp-probe`，验完即删；三个实例分别造出三种状态）：
+
+- `--lineage.scan-dir=D:/nope-such-dir` → `scanPhase:"failed"`、`scanError:"目录不存在：…"`，横幅红底可见（`rgb(253,236,234)`/`rgb(179,38,30)`、高 74px、`role=alert`），层过滤只有"全部"、左栏 0 行；服务照常 200 起，读端点按契约应答（无表可查回 400 而不是 500）。
+- `--lineage.scan-dir=D:/tmp-probe/empty`（空目录）→ 横幅 `D:\tmp-probe\empty 里没有 .sql 文件。…`，与上一态措辞可区分。
+- **同一个页面实例**（`performance.now()=96070ms`，全程没刷新）在「语料目录」填 `D:/project/flinkLearn/sql` 点「重扫目录」后自愈：横幅 `hidden`、左栏 14 行、标题 `全量表级 DAG（14 表 / 6 边）`、层过滤补出"第 0/1 层"、右栏 `重扫完成：D:\project\flinkLearn\sql → 15 文件 / 22 条语句 / 2327 条字段边，用时 1601ms`。`running` 态的蓝条与同源自愈在上一轮用慢语料单独验过（49 MB/12 文件 39.4s）。
+- 健康实例回归一遍没坏：顶栏 `15 文件/22 语句/14 表（12 有字段）/2327 字段边/6 表边/层级 1/错 0·未解析 0·星号 0`；点表 → 右栏 783 字段截到 80 行；点 `vin` 行 → `#view=column…&column=….vin`、标题 `…vin 的字段链路（5 节点 / 4 边）`、图例 8 项、console 只剩 cytoscape 的 wheelSensitivity 提示。**表级与字段级血缘本来就都解析正常**，页面空白纯属上面三条。
+- 一处工具侧的假象，记下来免得下轮再追：browser-use 的坐标点击在这个 531px 视口上没落到按钮（`elementFromPoint(按钮中心)` 返回的正是该按钮，`element.click()` 则照常生效），是自动化侧的坐标问题，不是页面缺事件。
+- 新增 `CorpusScannerTest` 2 例（启动失败留原因、`rescan-on-start=false` 自成一态），`mvn -o clean package` **254 绿**。
 
 ## 9. 里程碑与工作量
 
@@ -664,10 +694,11 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **252/252** + boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
+- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **254/254** + boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
 - [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。**像素级观感仍待人眼过一遍**（验证用的 in-app Browser 是 0x0 视口，只能读结构与文本）。
 - [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
 - [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。
 - [x] 5. `SELECT *` 边显示 `STAR · 星号未展开` 徽标 + 图例色块 + 30% 置信度；`UNRESOLVED` 边在 `/api/issues`、左栏质量过滤、字段清单徽标与右栏红条四处都可见——第 3、4 处是本轮补验时才修出来的，见 §8.4。
 - [x] 6. 涉密语料巡检（M5）：两份语料（`sql/` 与临时语料）列级 6 条 oracle 泄漏计数均为 0，折叠告警 0，剩下 2 条 UNRESOLVED 已定性为"没有列字典就是歧义、按约定不猜"；临时目录已删除，文档与用例里的表名列名一律脱敏（实测见 §11.1）。
 - [x] 7. 本方案入库为 `outputs/` 下唯一现行设计文档；两份旧 Calcite 路线文档已删除，作废理由保留在 §0。
+- [x] 8. 空快照必须自己说清是哪一种：**没在扫 / 扫失败（目录指错）/ 扫到 0 个 .sql / 跳过启动扫描**四态在页面上可区分，且 `running` 态会在 60s 内轮询自愈成图（`/api/overview` 的 `scanPhase`/`scanError` + 顶部横幅，实测见 §8.5）。

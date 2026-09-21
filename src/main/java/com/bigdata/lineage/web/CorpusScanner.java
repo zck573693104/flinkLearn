@@ -42,6 +42,25 @@ public class CorpusScanner implements ApplicationRunner {
     private final LineageStore store;
     private final LineageProperties properties;
 
+    /**
+     * 启动扫描失败的原因，给 {@code /api/overview} 用。
+     *
+     * <p>空快照在页面上只表现为"什么都没有"，而真正的原因（十有八九是相对路径按服务
+     * 进程的工作目录解析、指到了别处）本来就只落在日志里。不把它透出接口，用户就没法
+     * 把"UI 坏了"和"目录指错了"区分开。
+     */
+    private volatile String scanError;
+
+    /**
+     * 启动扫描的状态：{@code running} → {@code ready} / {@code failed}，
+     * {@code lineage.rescan-on-start=false} 时为 {@code skipped}。
+     *
+     * <p>存在的理由是时序：Spring Boot 先绑定端口、后跑 {@code ApplicationRunner}，
+     * 所以浏览器完全可能抢到一次还没填数据的空快照（语料越大窗口越长）。前端靠这个值
+     * 把"还在扫"和"扫了是空的"分开，而不是直接显示一张空图。
+     */
+    private volatile String scanPhase = "running";
+
     public CorpusScanner(LineageStore store, LineageProperties properties) {
         this.store = store;
         this.properties = properties;
@@ -51,12 +70,15 @@ public class CorpusScanner implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         if (!properties.isRescanOnStart()) {
+            scanPhase = "skipped";
             log.info("lineage.rescan-on-start=false，跳过启动扫描");
             return;
         }
         try {
             rescan(null);
         } catch (RuntimeException | IOException e) {
+            scanPhase = "failed";
+            scanError = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             log.warn("启动扫描 {} 失败，WebUI 以空快照启动：{}", properties.getScanDir(), e.getMessage());
         }
     }
@@ -98,10 +120,22 @@ public class CorpusScanner implements ApplicationRunner {
         ScanReport report = ScanReport.of(files.size(), withoutLineage, statements);
         store.replace(statements, report, root.toString(), sqlByJob, parseErrorJobs,
                 System.currentTimeMillis() - start);
+        scanError = null;
+        scanPhase = "ready";
         log.info("扫描 {} 完成：{} 个文件、{} 条血缘语句、{} 条字段边，用时 {}ms",
                 root, files.size(), report.getStatementCount(),
                 store.graph().getColumnLinks().size(), System.currentTimeMillis() - start);
         return store.current();
+    }
+
+    /** 最近一次启动扫描失败的原因；扫成功即为 null，页面据此收起告警条 */
+    public String getScanError() {
+        return scanError;
+    }
+
+    /** 启动扫描状态，取值见 {@link #scanPhase} */
+    public String getScanPhase() {
+        return scanPhase;
     }
 
     private Path resolve(String dir) {
