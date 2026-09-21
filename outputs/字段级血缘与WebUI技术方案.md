@@ -67,7 +67,7 @@ $ mvn validate   # 根 pom 保持 <packaging>jar</packaging> + <modules>lineage-
 | 表级半成品存储三件套 | `lineage/controller/TableLineageController.java`、`lineage/service/TableLineageService.java`、`lineage/model/TableLineage.java`（零引用；`model.TableLineage` 与 `parser.model.TableLineage` 重名混淆）。即原 §9 M6 清理项，提前完成 |
 | 违反"只依赖 antlr4"的旁路解析 | `com/bigdata/SqlCommandParser.java`（正则式 SQL 语句分类器）、`com/bigdata/Demo.java` |
 | 非标准源码目录 | `src/main/test/com/{CoordinateTransformUtil,GPSConverterUtils,Test}.java`（Maven 从不编译该路径） |
-| 运维脚本与残留 | `sh/**`（8 个 Hive/CK 部署脚本）、`flink-sql-lineage-parser/pom.xml`（空壳残留）、`superior-sql-parser-temp`（误提交的 mode 160000 gitlink、无 `.gitmodules`，仅移索引项、磁盘未动） |
+| 运维脚本与残留 | `sh/**`（8 个 Hive/CK 部署脚本）、`flink-sql-lineage-parser/pom.xml`（空壳残留）、`superior-sql-parser-temp`（误提交的 mode 160000 gitlink、无 `.gitmodules`，`213dd0d` 当时只移了索引项；磁盘上那份的删除记录见 §2.0.4 末段） |
 | 无关资源 | `hbase-1.sql`、`local.properties`、`config/{krb5.ini,user.keytab}` |
 
 #### 2.0.3 保留结果与验证
@@ -95,7 +95,9 @@ src/main/resources/{application.yml, log4j2.xml}
 - 删除 `run-test.bat` + `classpath.txt`：前者调用 `com.bigdata.lineage.LineageSystemTest`，该类不存在；`classpath.txt` 只服务于它。
 - 磁盘未跟踪垃圾已删：`cep-core/`（仅 5 个构建产物 `.class`/`.lst`/`test_output.log`，无源码）、`cep-web/`（空目录）、`compile_error.log`、`compile_result.log`、`tmpdb/`（含 16 份涉密语料副本，按约定提交前必删，源文件在 `D:\ai coding\...` 可再拷）。
 
-**唯一保留项**：`superior-sql-parser-temp/` 是一个**独立的嵌套 git 仓库**（自带 `.git`，remote 为 `github.com/melin/superior-sql-parser`），其 HEAD `94fd069e`（分支 `flink-only-jdk17-dev`，"完成 Flink SQL 解析器 JDK 17 升级和模块精简"）**不存在于任何远端分支**，我们仓库历史上也只有一个 160000 gitlink 指针、没有它的对象。删掉即永久丢失该提交，故保留待你确认（可先 `git bundle` 导出孤立提交再删）。
+**已确认删除（2026-09-21），代价记录在这里**：`superior-sql-parser-temp/` 是一个**独立的嵌套 git 仓库**（自带 `.git`，remote 为 `github.com/melin/superior-sql-parser`），其 HEAD `94fd069e`（分支 `flink-only-jdk17-dev`，"完成 Flink SQL 解析器 JDK 17 升级和模块精简"）**不存在于任何远端分支**，我们仓库历史上也只有一个 160000 gitlink 指针、没有它的对象。你回"需要"后目录已 `rm -rf`，**但删前没按本节的建议做 `git bundle` 导出**，该孤立提交已不可恢复（已核实上游 8 个分支 head 无一为 `94fd069e`，也没有 `flink-only-jdk17-dev`）。影响面有限：那是对第三方 superior-sql-parser 的本地 JDK 17 化改造，本分支的路线早已确定不引入它的 jar（§2.0 起我们只维护自己那 6 份 `.g4`）；若将来还要一份 JDK17 的 g4 参考，只能重新 clone 上游再改。唯一的补救渠道是磁盘级快照（Windows 文件历史记录/卷影副本），不在仓库内。
+
+**流程教训**：删任何东西前先 `grep` 仓库文档对该路径的说明——这条建议本仓库自己写了 23 行，我是删完才读到的。
 
 ### 2.1 Web 层：清理前的现状（下表部分行已被 2.0 的删除动作作废，保留作为决策依据）
 
@@ -541,7 +543,7 @@ src/main/resources/static/
 | **M3 服务层** | ✅ 已完成：starter-web 2.7.18 + `CorpusScanner`（jobId=文件#序号）+ `ScanReport` 账本 + 9 个端点 + `ApiResponse`/`ApiErrorAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1）。实测细节见 §7.4 | 245 测试全绿（新增 17）；真起 jar 逐端点 `curl` 通过，overview 与 M2 基线逐项一致；0 条折叠告警；无 slf4j 双绑定 | 1d |
 | **M4 前端** | ✅ 已完成：vendor 三件套（cytoscape 3.32.1 + dagre 0.8.5 + cytoscape-dagre 2.5.0）+ 三栏 ES module（`main/api/graphTable/graphColumn/detailPanel/badges`）+ 表级 DAG 与字段链路两种图 + 右栏逐跳证据（hops/derivation/confidence/SQL 高亮/parseError 红条）+ PNG 与子图 JSON 导出 + hash 定位。实测细节见 §8.4 | `mvn -o clean test` **246 绿**；jar 内 static 21 文件、`GET /` 200；真浏览器（browser-use）表级/字段级金路径 + 300 节点超限 + 缺列 400 + parseError 红条 + 星号/未解析边界逐项通过，console 零 error；揪出 7 个前端缺陷与 1 处"把解析缺口说成链路起点"的语义谎言 | 2d |
 | **M5 语料回归** | ✅ 已完成：子查询身份（别名只做查找键，`#subN` 才是身份）+ 无参关键字函数与 lambda 形参不再当列（§6）。实测细节与逐条定性见 §11.1 | 涉密语料：折叠告警 62→**0**、未折叠伪节点 0、幽灵列 0、UNRESOLVED 7→**2**（两条都是 CASE ELSE 的未限定列，两张未知表 ⇒ 按"宁缺勿假"口径保留，`ambiguousUnqualifiedColumnIsNotForcedOntoATable` 已锁这个语义）；`sql/` 基线：2376 原始列边不变，图列边 2329→**2327**（4 处 `current_timestamp` 假来源），0 告警。`mvn -o clean test` **252 绿** | 1d |
-| **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理。剩余：`column_lineage` DDL 升级脚本（随 §10 持久化阶段出）、`superior-sql-parser-temp/` 待你确认删除 | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线 | 0d |
+| **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理，`superior-sql-parser-temp/` 也按你确认删除（代价与教训记在 §2.0.4 末段）。剩余：`column_lineage` DDL 升级脚本（随 §10 持久化阶段出） | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线 | 0d |
 
 合计约 7.5 人日（§2.0 的结构与文档清理已完成，不计入）。M1 与 M3 可并行（解析层不依赖 Spring）。
 

@@ -86,7 +86,7 @@ outputs/                                           方案与总结文档
 ## 下一步
 
 字段级血缘 + WebUI（M0 语法缺口 → M5 真实语料巡检）已落地，设计、口径与逐里程碑实测见
-[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。剩下的只有 M6 尾巴：`column_lineage` 落库 DDL（预案见方案 §10，随持久化阶段一起做），以及顶层 `superior-sql-parser-temp/` 这份历史产物待确认后删除。
+[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。剩下的只有 M6 尾巴：`column_lineage` 落库 DDL（预案见方案 §10，随持久化阶段一起做）。
 
 ## 历史
 
