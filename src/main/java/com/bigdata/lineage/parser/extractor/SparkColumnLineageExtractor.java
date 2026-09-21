@@ -32,6 +32,6 @@ public class SparkColumnLineageExtractor {
         parser.removeErrorListeners();
 
         return new ColumnLineageEngine(sql, parser.sqlStatements(),
-                parser.getRuleNames(), parser.getVocabulary()).run();
+                parser.getRuleNames(), parser.getVocabulary(), "SPARK").run();
     }
 }

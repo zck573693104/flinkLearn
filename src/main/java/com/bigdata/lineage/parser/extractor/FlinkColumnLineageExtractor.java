@@ -25,6 +25,6 @@ public class FlinkColumnLineageExtractor {
         parser.removeErrorListeners();
 
         return new ColumnLineageEngine(sql, parser.sqlStatements(),
-                parser.getRuleNames(), parser.getVocabulary()).run();
+                parser.getRuleNames(), parser.getVocabulary(), "FLINK").run();
     }
 }

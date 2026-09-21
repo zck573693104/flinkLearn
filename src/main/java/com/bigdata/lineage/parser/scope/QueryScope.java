@@ -68,9 +68,13 @@ public final class QueryScope {
     /**
      * 未限定列的归属：只有一张表时可直接认定；多表时先找声明了该列的派生关系，
      * 其次若未知表头的关系只剩一张，也认定（其余关系都报出了自己的列，容不下这一列）。
-     * 仍然歧义时返回 null 让上层标为 UNRESOLVED——歧义时猜测比承认猜不到更糟。
+     * 仍然歧义时返回 null 让上层标为 UNRESOLVED——歧义时猜测比承认猜不到更糟，
+     * 尤其不能向外层兜底：内层自己就有表却没有一张容得下这列，那是真歧义，不是相关子查询。
      */
     public Relation bindByColumn(String column) {
+        if (relations.isEmpty()) {
+            return parent == null ? null : parent.bindByColumn(column);
+        }
         if (relations.size() == 1) {
             return relations.get(0);
         }
@@ -91,10 +95,24 @@ public final class QueryScope {
         if (match != null) {
             return match;
         }
-        if (open.size() == 1) {
-            return open.get(0);
+        return open.size() == 1 ? open.get(0) : null;
+    }
+
+    /**
+     * 这个前缀是不是某个已登记关系的命名空间开头（{@code cat.sch} 之于 {@code cat.sch.tbl}）。
+     * 是就说明它是库/表限定符而不是结构体列名，不能拿首段去当列。
+     */
+    public boolean isNamespacePrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return false;
         }
-        return parent == null ? null : parent.bindByColumn(column);
+        String dotted = prefix + ".";
+        for (Relation relation : relations) {
+            if (relation.getName().startsWith(dotted)) {
+                return true;
+            }
+        }
+        return parent != null && parent.isNamespacePrefix(prefix);
     }
 
     private static boolean containsSame(List<Relation> list, Relation relation) {

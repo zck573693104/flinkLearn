@@ -47,15 +47,22 @@ final class ColumnLineageEngine {
     private final ParseTree root;
     private final String[] ruleNames;
     private final Vocabulary vocabulary;
+    private final String engine;
 
     private final List<ColumnEdge> edges = new ArrayList<>();
     private int pseudoCounter;
 
-    ColumnLineageEngine(String sql, ParseTree root, String[] ruleNames, Vocabulary vocabulary) {
+    /**
+     * @param engine FLINK / SPARK / PRESTO，在建边时一次写定：调用方若在缓存结果上补这个字段，
+     *               就成了多线程共写同一批 {@link ColumnEdge}。
+     */
+    ColumnLineageEngine(String sql, ParseTree root, String[] ruleNames, Vocabulary vocabulary,
+                        String engine) {
         this.sql = sql;
         this.root = root;
         this.ruleNames = ruleNames;
         this.vocabulary = vocabulary;
+        this.engine = engine;
     }
 
     List<ColumnEdge> run() {
@@ -135,7 +142,29 @@ final class ColumnLineageEngine {
         if (tablePath == null || query == null) {
             return;
         }
-        processQuery(query, null, tableName(tablePath), null);
+        processQuery(query, null, tableName(tablePath), declaredTableColumns(ctx));
+    }
+
+    /**
+     * CTAS 的显式列清单（Flink 把列包在 {@code tableElement} 里，Spark/Presto 直接挂
+     * {@code columnDefinition}）：与水查询按位置对齐，否则目标列名会退回 SELECT 里的别名。
+     */
+    private List<String> declaredTableColumns(ParserRuleContext create) {
+        List<String> names = new ArrayList<>();
+        collectColumnDefinitions(create, names);
+        for (ParserRuleContext element : childRules(create, "tableElement")) {
+            collectColumnDefinitions(element, names);
+        }
+        return names;
+    }
+
+    private void collectColumnDefinitions(ParserRuleContext ctx, List<String> names) {
+        for (ParserRuleContext definition : childRules(ctx, "columnDefinition")) {
+            String name = uidOf(definition);
+            if (name != null) {
+                names.add(name);
+            }
+        }
     }
 
     private void handleUpdate(ParserRuleContext ctx) {
@@ -171,29 +200,38 @@ final class ColumnLineageEngine {
     private List<String> processQuery(ParserRuleContext qe, QueryScope parent,
                                       String target, List<String> positional) {
         QueryScope cteScope = new QueryScope(parent);
+        registerWith(qe, cteScope);
+
+        // 集合操作的各分支共用同一套输出列名：没有显式列清单时由第一分支定名。
+        // 空清单与"没有清单"等价——columnNames() 永不返回 null，按 null 判断会让整层失去列名。
+        List<String> names = positional == null || positional.isEmpty() ? null : positional;
+        List<String> head = processBranch(qe, cteScope, target, names);
+        if (names == null) {
+            names = head;
+        }
+        processSetBranches(qe, cteScope, target, names);
+        return names;
+    }
+
+    /**
+     * 集合操作在语法里是右递归的：{@code A UNION B INTERSECT C} 解析成
+     * {@code A UNION (B INTERSECT C)}，只看直接子节点会静默丢掉末分支。
+     */
+    private void processSetBranches(ParserRuleContext qe, QueryScope outer,
+                                    String target, List<String> names) {
+        for (ParserRuleContext part : childRules(qe, "queryExpression")) {
+            QueryScope partScope = new QueryScope(outer);
+            registerWith(part, partScope);
+            processBranch(part, partScope, target, names);
+            processSetBranches(part, partScope, target, names);
+        }
+    }
+
+    private void registerWith(ParserRuleContext qe, QueryScope scope) {
         ParserRuleContext with = childRule(qe, "withClause");
         if (with != null) {
-            registerCtes(with, cteScope);
+            registerCtes(with, scope);
         }
-
-        List<String> names = positional;
-        List<String> firstBranch = processBranch(qe, cteScope, target, names);
-        if (names == null) {
-            names = firstBranch;
-        }
-
-        for (ParserRuleContext part : childRules(qe, "queryExpression")) {
-            QueryScope partScope = new QueryScope(cteScope);
-            ParserRuleContext partWith = childRule(part, "withClause");
-            if (partWith != null) {
-                registerCtes(partWith, partScope);
-            }
-            List<String> branchNames = processBranch(part, partScope, target, names);
-            if (names == null) {
-                names = branchNames;
-            }
-        }
-        return names;
     }
 
     private List<String> processBranch(ParserRuleContext branch, QueryScope parent,
@@ -340,8 +378,10 @@ final class ColumnLineageEngine {
         List<String> columns = columnNames(childRule(lateral, "columnNameList"));
         // 参数只在展开之前可见：先解来源，再登记伪关系
         ParserRuleContext rowAlias = childRule(lateral, "lateralViewTableAlias");
+        // posexplode 的首列是行下标，和 Presto/Flink 的 WITH ORDINALITY 一样没有上游字段
+        int counter = "POSEXPLODE".equals(functionNameOf(lateral)) && columns.size() >= 2 ? 0 : -1;
         registerExpansion("lat", lateral, columns, argSources(lateral, scope),
-                columns.size(), uidOf(rowAlias), scope);
+                counter, uidOf(rowAlias), scope);
     }
 
     private void registerUnnest(ParserRuleContext ref, QueryScope scope) {
@@ -361,10 +401,9 @@ final class ColumnLineageEngine {
             columns = uids.isEmpty() ? new ArrayList<String>()
                     : new ArrayList<>(uids.subList(1, uids.size()));
         }
-        // WITH ORDINALITY 的末列是行计数器，没有上游字段
-        int realColumns = hasToken(ref, "KW_ORDINALITY") && columns.size() >= 2
-                ? columns.size() - 1 : columns.size();
-        registerExpansion("unnest", ref, columns, perArg, realColumns, rowAlias, scope);
+        int counter = hasToken(ref, "KW_ORDINALITY") && columns.size() >= 2
+                ? columns.size() - 1 : -1;
+        registerExpansion("unnest", ref, columns, perArg, counter, rowAlias, scope);
     }
 
     /** 展开参数逐个解析来源，列与参数一一对应时可逐列回溯 */
@@ -376,8 +415,9 @@ final class ColumnLineageEngine {
         return perArg;
     }
 
+    /** {@code counter} 是行下标列的下标，没有下标列时为 -1 */
     private void registerExpansion(String kind, ParserRuleContext source, List<String> columns,
-                                   List<List<ColumnRef>> perArg, int realColumns,
+                                   List<List<ColumnRef>> perArg, int counter,
                                    String rowAlias, QueryScope scope) {
         String pseudo = nextPseudo(kind);
         // UNNEST(a, b) AS u (x, y) 第 i 列来自第 i 个数组；posexplode / MAP 展开两列一参，只能整体回溯
@@ -391,10 +431,10 @@ final class ColumnLineageEngine {
             }
         }
         for (int i = 0; i < columns.size(); i++) {
-            boolean generated = i >= realColumns;
+            boolean generated = i == counter;
             List<ColumnRef> sources = generated ? new ArrayList<ColumnRef>()
                     : (oneToOne ? perArg.get(i) : union);
-            // 常量数组展开（UNNEST(ARRAY[1, 2])）与行计数器一样没有上游字段
+            // 常量数组展开（UNNEST(ARRAY[1, 2])）与行下标一样没有上游字段
             edges.add(edge(pseudo, columns.get(i), sources,
                     generated || sources.isEmpty() ? ColumnDerivation.CONSTANT
                             : ColumnDerivation.EXPRESSION,
@@ -437,9 +477,13 @@ final class ColumnLineageEngine {
             out.add(RawRef.column(directUids((ParserRuleContext) node)));
             return;
         }
-        if ("primaryExpression".equals(name) && childRule((ParserRuleContext) node, "tablePath") != null) {
-            out.add(RawRef.star(directUids(childRule((ParserRuleContext) node, "tablePath"))));
-            return;
+        if ("primaryExpression".equals(name)) {
+            ParserRuleContext tablePath = childRule((ParserRuleContext) node, "tablePath");
+            if (tablePath != null) {
+                // qualifiedStar 要的两件事这里一次拿全：表名段与是否为 t.* 形式
+                out.add(RawRef.star(directUids(tablePath)));
+                return;
+            }
         }
         if (isBareStar(node)) {
             out.add(RawRef.star(Collections.<String>emptyList()));
@@ -481,10 +525,12 @@ final class ColumnLineageEngine {
         Relation hit = ref.columns.size() == 1
                 ? scope.bindByColumn(column) : bindQualified(ref.columns, scope);
 
-        if (hit == null && ref.columns.size() > 1) {
-            // 限定符不是作用域里的表：那是结构体列的访问路径（operation.info_str），
-            // 取值来自根列 operation，末段只是往下钻的字段名。
-            // 根列也绑不上时保留原样，宁可承认猜不到也不编造节点名。
+        if (hit == null && ref.columns.size() > 1 && !scope.isNamespacePrefix(qualifier)) {
+            // 限定符不是作用域里的表，也不是任何表的命名空间前缀：那是结构体列的访问路径
+            // （operation.info_str），取值来自根列 operation，末段只是往下钻的字段名。
+            // 根列的归属沿用未限定列的口径：语料里 UNNEST 逗号并列时，展开列报得出自己的
+            // 列清单，根列只可能属于那张报不出表头的表。
+            // 根列也绑不上时保留原样，宁可承认猜不到也不编造列名。
             Relation root = scope.bindByColumn(ref.columns.get(0));
             if (root != null) {
                 column = ref.columns.get(0);
@@ -607,7 +653,7 @@ final class ColumnLineageEngine {
         }
         if ("functionCall".equals(name)) {
             // 函数名里的关键字 token 大小写随用户，统一按大写比对
-            return AGGREGATE_FUNCTIONS.contains(functionName(node));
+            return AGGREGATE_FUNCTIONS.contains(functionNameOf((ParserRuleContext) node));
         }
         if ("windowDefinition".equals(name)) {
             return true;
@@ -620,8 +666,9 @@ final class ColumnLineageEngine {
         return false;
     }
 
-    private String functionName(ParseTree node) {
-        ParserRuleContext function = childRule((ParserRuleContext) node, "functionName");
+    /** 规则里的 {@code functionName} 子节点文本，大写归一后与聚合/展开函数表比对 */
+    private String functionNameOf(ParserRuleContext ctx) {
+        ParserRuleContext function = childRule(ctx, "functionName");
         if (function == null) {
             return "";
         }
@@ -748,6 +795,7 @@ final class ColumnLineageEngine {
                 .derivation(derivation)
                 .transform(transform)
                 .ordinal(ordinal)
+                .engine(engine)
                 .build();
     }
 

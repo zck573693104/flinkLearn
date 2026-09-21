@@ -200,37 +200,33 @@ private List<ColumnEdge> columnEdges;   // @Builder.Default = Collections.emptyL
 
 **Lombok 约束（必须遵守）**：`TableLineage.java:37` 的 `confidence = 0.95` 缺 `@Builder.Default`，同类问题在新模型里一律用 `@Builder.Default` 显式声明，否则 builder 造出的边 confidence 恒为 0。顺手在本次改动里补上 `TableLineage` 的 `@Builder.Default`（`confidence/hasCte/hasTemporalJoin/hasWindowFunc` 四个字段）。
 
-### 4.2 作用域模型
+### 4.2 作用域模型（M1 已按此实现）
 
 ```java
 final class QueryScope {
     final QueryScope parent;
-    String outerAlias;                        // 本子查询对外的别名（可空）
-    final Map<String, Relation> byAlias;      // 别名 → 关系（FROM/JOIN 收集）
-    final List<Relation> relations;           // 顺序即位置，未限定列的唯一候选判定用
-    final Map<String, List<String>> derivedOutputs; // CTE/子查询名 → 其输出列（按序）
-    List<String> outputColumns;               // 本 scope SELECT 输出列（供上层拼接）
+    final Map<String, Relation> byKey;   // 关系名 / 别名 / 末段短名 → 关系，先到先得
+    final List<Relation> relations;      // 顺序即位置，未限定列的唯一候选判定用
 }
 
 final class Relation {
-    String physicalTable;   // 非 null ⇒ 物理表（已归一化）
-    String cteName;         // 非 null ⇒ CTE / 派生关系
-    List<String> declaredColumns;  // aliasWithColumns / lateralView 列别名 / CTE 列名清单
-    String alias;
-    boolean star;           // 该关系是否被 SELECT * 引用过
+    String name;              // 物理表全名、CTE 名或伪关系名 #sub<k>/#lat<k>/#unnest<k>
+    List<String> knownColumns;// 派生关系声明得出来的列；空 = 表头未知
 }
 ```
 
 作用域规则（写死在实现里，避免歧义）：
 
-- 进入 `queryExpression` → `push`；离开 → `pop`。**CTE 名只在定义它的那一层及其子层可见**，修复 2.3 #1 的泄漏（表级 `cteNames` 扁平集合保留不动，列级用栈；表级泄漏已由 546ae69 的语料回归压到 0，不在本次动它）。
-- `tableReference` 的每个分支注册一个 `Relation`：
-  - `tablePath (alias)?` → 物理表 + 别名（无别名则用表名末段和全限定名两个 key 都登记）
-  - `LPAREN queryExpression RPAREN (alias)?` → 先递归解析子查询得到 `outputColumns`，登记为派生关系；**无别名时报 `UNRESOLVED` 并降置信度**（SQL 本身要求子查询别名）
-  - `tvfFunction`（Flink）→ 取首参表名，窗口列不产生列依赖
-  - `KW_UNNEST ... (aliasWithColumns | alias)?`（Presto/Flink）→ `declaredColumns` 来自 `aliasWithColumns`
-  - `lateralView`（Spark）→ 表别名与列别名分别取（依赖 5.x 语法标签化改造）
+- 每个查询表达式（外层 SELECT、集合操作分支、子查询、CTE 体、标量子查询）开一层 `QueryScope`，父层只用于**限定符**查找（相关子查询要引用外层表）；未限定列**不向父层兜底**——内层自己就有表却容不下这列时是真歧义，猜给外层表会编造来源。
+- `tableReference` 的每个分支注册一个 `Relation`（JOIN 右侧的 `tablePath`/`(queryExpression)` 是同节点的直接子节点，一次登记到位）：
+  - `tablePath (alias)?` → 物理表；同名已被 CTE 占用时沿用 CTE 关系，不重复登记
+  - `LPAREN queryExpression RPAREN (alias)?` → 有别名用别名当关系名，无别名用伪节点 `#sub<k>`
+  - `tvfFunction`（Flink）→ 取首参表名登记为同一关系，窗口列不产列依赖
+  - `KW_UNNEST ... (aliasWithColumns | alias)?`（Presto/Flink）与 `lateralView`（Spark）→ 展开列挂到伪关系；`posexplode` 的下标列与 `WITH ORDINALITY` 的末列都是 CONSTANT，没有上游字段
   - `temporalClause`（Flink）→ 时态表按普通关系登记
+- 伪关系（`#` 前缀）只服务列绑定，图构建层把它折掉；CTE 是"字段来源"的中间站，保留成节点。
+- 集合操作在语法里右递归（`A UNION B INTERSECT C` → `A UNION (B INTERSECT C)`），分支必须递归走完，只看直接子节点会静默丢掉末分支；各分支共用同一套输出列名，没有显式列清单时由第一分支定名。
+- CTAS/CREATE VIEW 的显式列清单（Flink 包在 `tableElement` 里，Spark/Presto 直接挂 `columnDefinition`）同样按位置命名目标列。
 
 ### 4.3 目标列命名与来源提取（每个 SELECT 一次）
 
@@ -271,12 +267,20 @@ final class Relation {
 | `STAR` | 未展开星号 | 0.30 | 粗虚线 + `*` 徽标，点击提示"未展开" |
 | `UNRESOLVED` | 限定符绑不上 / 跨语句依赖 | 0.20 | 灰色虚线，进 `/api/issues` |
 
-实现期（M1）确认的三条绑定细则，都不在 v1 方案里，写在这里对齐：
+实现期（M1）与整体回归确认的绑定细则，都不在 v1 方案里，写在这里对齐：
 
-- **结构体字段路径**：`operation.info_str` 的 `operation` 若不是作用域里的关系，且根列能唯一绑到某张表，
-  就按 ROW 列的字段访问处理，来源是根列 `t.operation`（字段名留在 `rawText` 里给 UI 当证据）。
-  根列也绑不上时保持原样标 `UNRESOLVED`，不编造节点名。真实语料 2376 条边里这类占 1282 条，
-  不做的话 60% 的边都会退化成 `UNRESOLVED`。
+- **结构体字段路径**：`operation.info_str` 的 `operation` 若不是作用域里的关系、且不是任何已登记关系的
+  命名空间前缀（`cat.sch` 之于 `cat.sch.tbl`——那是库限定符，不能当列名），就按 ROW 列的字段访问处理，
+  来源是根列 `t.operation`（字段名留在 `rawText` 里给 UI 当证据）。真实语料 2376 条边里这类占 1282 条，
+  不做的话 60% 的边都会退化成 `UNRESOLVED`。根列也绑不上时保持原样标 `UNRESOLVED`，不编造列名。
+- **未限定列不向父作用域兜底**：内层自己就有表却没有一张容得下这列时是真歧义，标 `UNRESOLVED`；
+  向父层兜底会让相关子查询把外层表当成自己的来源（`(SELECT v FROM p JOIN q)` 里的 `v` 凭空变成 `r.v`）。
+- **展开函数的下标列**：Spark `posexplode` 的首列、Presto/Flink `WITH ORDINALITY` 的末列都是行计数器，
+  按 `CONSTANT` 处理，没有上游字段。
+- **集合操作右递归**：`A UNION B INTERSECT C` 在语法里是 `A UNION (B INTERSECT C)`，分支要递归走完；
+  末分支的目标列名取第一分支的表头（`SELECT a … UNION ALL SELECT b` 对外只有 `a` 一列，`b` 不是目标列名）。
+- **CTAS 的显式列清单**：Flink 把列包在 `tableElement` 里、Spark/Presto 直接挂 `columnDefinition`，
+  两种形态都按位置命名目标列。
 - **未知表头优先于猜测**：未限定列在多关系作用域里，先找声明了该列的派生关系；都不声明时，
   若"未知表头"的关系只剩一张就归它（其余都报出了自己的列，容不下这一列）。仍歧义才 `UNRESOLVED`。
 - **乘号与星号同源**：`MULT` token 只有在父节点里独占时才当作"全部列"，否则 `amount * rate`

@@ -191,17 +191,29 @@ class SparkColumnLineageTest {
     }
 
     @Test
-    void unionBranchesBothFeedTheSameTargetColumn() {
+    void unionBranchNamesComeFromTheFirstBranchEvenWithoutAlias() {
         ColumnAssert result = check(
-                "INSERT INTO dwd.tgt SELECT a FROM ods.s1 UNION ALL SELECT b AS a FROM ods.s2");
+                "INSERT INTO dwd.tgt SELECT a FROM ods.s1 UNION ALL SELECT b FROM ods.s2");
+        List<String> columns = new ArrayList<>();
         List<String> sources = new ArrayList<>();
         for (ColumnEdge edge : result.toTargets("dwd.tgt")) {
-            assertEquals("a", edge.getTargetColumn(), result.describe());
+            columns.add(edge.getTargetColumn());
             sources.add(edge.getSources().get(0).nodeId());
         }
-        assertEquals(2, sources.size(), result.describe());
-        assertTrue(sources.containsAll(Arrays.asList("ods.s1.a", "ods.s2.b")),
-                sources.toString());
+        // 第二分支的 b 不是目标列名：集合操作对外只暴露第一分支的表头
+        assertEquals(Arrays.asList("a", "a"), columns, result.describe());
+        assertEquals(Arrays.asList("ods.s1.a", "ods.s2.b"), sources, result.describe());
+    }
+
+    @Test
+    void everyBranchOfAChainedSetOperationEmitsEdges() {
+        ColumnAssert result = check("INSERT INTO dwd.tgt SELECT a FROM ods.s1 "
+                + "UNION ALL SELECT b FROM ods.s2 INTERSECT SELECT c FROM ods.s3");
+        // A UNION B INTERSECT C 在语法里右递归成 A UNION (B INTERSECT C)，只看直接子节点会丢末分支
+        assertEquals(3, result.edges().size(), result.describe());
+        for (ColumnEdge edge : result.edges()) {
+            assertEquals("a", edge.getTargetColumn(), result.describe());
+        }
     }
 
     // ============================================
@@ -216,6 +228,16 @@ class SparkColumnLineageTest {
         result.sources(pseudo, "elem", "ods.base.arr")
                 .sources("dwd.tgt", "elem", pseudo + ".elem")
                 .noGhostColumns();
+    }
+
+    @Test
+    void posexplodePositionColumnHasNoUpstreamField() {
+        ColumnAssert result = check("INSERT INTO dwd.tgt SELECT pos, elem FROM ods.base "
+                + "LATERAL VIEW posexplode(ods.base.arr) e AS pos, elem");
+        String pseudo = result.pseudoTable("#lat");
+        result.sources(pseudo, "pos", new String[0])
+                .derivation(pseudo, "pos", ColumnDerivation.CONSTANT)
+                .sources(pseudo, "elem", "ods.base.arr");
     }
 
     // ============================================
@@ -285,6 +307,23 @@ class SparkColumnLineageTest {
     void ambiguousUnqualifiedColumnIsNotForcedOntoATable() {
         check("INSERT INTO dwd.tgt SELECT id FROM ods.a JOIN ods.b ON a.k = b.k")
                 .derivation("dwd.tgt", "id", ColumnDerivation.UNRESOLVED);
+    }
+
+    /** 内层自己就有表却容不下这列，那是真歧义，不该回头去问外层作用域 */
+    @Test
+    void innerScopeDoesNotBorrowTheOuterTableForItsOwnColumns() {
+        check("INSERT INTO dwd.tgt SELECT x.v FROM "
+                + "(SELECT v FROM ods.p JOIN ods.q ON p.k = q.k) x JOIN ods.r ON x.v = r.id")
+                .derivation("x", "v", ColumnDerivation.UNRESOLVED)
+                .sources("x", "v", "v");
+    }
+
+    /** 限定符是库/表命名空间的一部分时，首段不是列名，不能当成字段路径的根 */
+    @Test
+    void namespaceQualifiedReferenceIsNotAStructPath() {
+        check("INSERT INTO dwd.tgt SELECT cat.sch.col FROM cat.sch.tbl")
+                .derivation("dwd.tgt", "col", ColumnDerivation.UNRESOLVED)
+                .sources("dwd.tgt", "col", "cat.sch.col");
     }
 
     /** 派生关系报得出自己的列，未限定列就只剩一个可能的东家 */

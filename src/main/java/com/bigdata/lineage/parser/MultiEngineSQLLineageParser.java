@@ -42,9 +42,9 @@ public class MultiEngineSQLLineageParser {
         this.flinkExtractor = new TableLineageExtractor();
         this.sparkExtractor = new SparkTableLineageExtractor();
         this.prestoExtractor = new PrestoTableLineageExtractor();
-        this.flinkColumns = new ColumnSource("FLINK", new FlinkColumnLineageExtractor()::extractFromSql);
-        this.sparkColumns = new ColumnSource("SPARK", new SparkColumnLineageExtractor()::extractFromSql);
-        this.prestoColumns = new ColumnSource("PRESTO", new PrestoColumnLineageExtractor()::extractFromSql);
+        this.flinkColumns = new ColumnSource(new FlinkColumnLineageExtractor()::extractFromSql);
+        this.sparkColumns = new ColumnSource(new SparkColumnLineageExtractor()::extractFromSql);
+        this.prestoColumns = new ColumnSource(new PrestoColumnLineageExtractor()::extractFromSql);
         this.enableCache = enableCache;
         this.cache = new SqlCache();
     }
@@ -158,24 +158,18 @@ public class MultiEngineSQLLineageParser {
      */
     private TableLineage attachColumnLineage(TableLineage lineage, ColumnSource source, String sql) {
         try {
-            List<ColumnEdge> edges = source.extractor.apply(sql);
-            for (ColumnEdge edge : edges) {
-                edge.setEngine(source.engine);
-            }
-            lineage.setColumnEdges(edges);
+            lineage.setColumnEdges(source.extractor.apply(sql));
         } catch (Exception e) {
             log.warn("字段级血缘提取失败，仅保留表级结果：{}", e.getMessage());
         }
         return lineage;
     }
-    
-    /** 方言到列级提取的绑定，回退循环里要连着引擎名一起带走 */
+
+    /** 方言到列级提取的绑定；引擎标记由各自的提取器写进边里，这里不再回写缓存对象 */
     private static final class ColumnSource {
-        private final String engine;
         private final Function<String, List<ColumnEdge>> extractor;
-        
-        ColumnSource(String engine, Function<String, List<ColumnEdge>> extractor) {
-            this.engine = engine;
+
+        ColumnSource(Function<String, List<ColumnEdge>> extractor) {
             this.extractor = extractor;
         }
     }

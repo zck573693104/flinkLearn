@@ -131,6 +131,13 @@ class FlinkColumnLineageTest {
     }
 
     @Test
+    void ctasColumnListNamesTheColumnsOfEachPosition() {
+        check("CREATE TABLE dwd.tgt (id BIGINT, nm STRING) AS SELECT a, b FROM ods.src")
+                .sources("dwd.tgt", "id", "ods.src.a")
+                .sources("dwd.tgt", "nm", "ods.src.b");
+    }
+
+    @Test
     void subqueryAndUnionBranches() {
         ColumnAssert sub = check("INSERT INTO dwd.tgt SELECT x.id FROM (SELECT id FROM ods.src) x");
         sub.sources("x", "id", "ods.src.id").sources("dwd.tgt", "id", "x.id");
@@ -176,6 +183,14 @@ class FlinkColumnLineageTest {
                 .sources("user_app_data", "app_name", pseudo + ".app_name")
                 .sources("user_app_data", "day", "ods.kafka.day")
                 .noGhostColumns();
+    }
+
+    /** 语料形态：字段路径的根列与 UNNEST 并列时，展开列报得出表头，根列只可能属于另一张 */
+    @Test
+    void structRootSurvivesCommaUnnestSibling() {
+        check("INSERT INTO dwd.tgt SELECT operation.info_str FROM ods.kafka, "
+                + "UNNEST(eventBodyList) AS t (app_name)")
+                .sources("dwd.tgt", "info_str", "ods.kafka.operation");
     }
 
     @Test
