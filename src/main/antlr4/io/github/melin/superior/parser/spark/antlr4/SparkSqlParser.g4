@@ -76,8 +76,10 @@ cteStatement
     : withClause (insertStatement | queryExpression)
     ;
 
+// 列名清单是列级血缘的命名锚点：WITH t(a, b) AS (SELECT x, y ...) 时，
+// 下游 t.a 的来源要靠清单位置映射回 x，缺了它就只能按内层 SELECT 的输出名猜
 cteDefinition
-    : cteName KW_AS LPAREN queryExpression RPAREN
+    : cteName (LPAREN columnNameList RPAREN)? KW_AS LPAREN queryExpression RPAREN
     ;
 
 // ============================================
@@ -136,10 +138,17 @@ tableReference
     | tableReference KW_TABLESAMPLE LPAREN NUMBER (KW_PERCENT | KW_ROWS)? RPAREN (alias)?
     ;
 
-// Hive/Spark 特有：LATERAL VIEW [OUTER] udf(...) [表别名] AS 列别名[, 列别名...]
+// Hive/Spark 特有：LATERAL VIEW [OUTER] udf(...) [行别名] AS 列别名[, 列别名...]
+// 行别名与产出列分属两个子规则：写成平铺 uid? ... uid (COMMA uid)* 时生成的 API 只有
+// 一个 uid() 列表，列级血缘无法区分哪个是行别名、哪些是 explode/posexplode 的产出列。
+// uid 不含 KW_AS，故 RPAREN 之后是 uid 还是 KW_AS 就能确定地判定可选分支，无歧义。
 lateralView
     : KW_LATERAL KW_VIEW KW_OUTER? functionName LPAREN (expression (COMMA expression)*)? RPAREN
-      uid? KW_AS uid (COMMA uid)*
+      (lateralViewTableAlias)? KW_AS columnNameList
+    ;
+
+lateralViewTableAlias
+    : uid
     ;
 
 joinType

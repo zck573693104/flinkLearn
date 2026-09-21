@@ -62,7 +62,7 @@ cteStatement
     ;
 
 cteDefinition
-    : cteName KW_AS LPAREN queryExpression RPAREN
+    : cteName (LPAREN columnNameList RPAREN)? KW_AS LPAREN queryExpression RPAREN
     ;
 
 // ============================================

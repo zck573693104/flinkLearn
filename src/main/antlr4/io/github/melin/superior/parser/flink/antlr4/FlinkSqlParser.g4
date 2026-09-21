@@ -71,8 +71,10 @@ cteStatement
     : withClause (insertStatement | queryExpression)
     ;
 
+// 列名清单是列级血缘的命名锚点：WITH t(a, b) AS (SELECT x, y ...) 时，
+// 下游 t.a 的来源要靠清单位置映射回 x，缺了它就只能按内层 SELECT 的输出名猜
 cteDefinition
-    : cteName KW_AS LPAREN queryExpression RPAREN
+    : cteName (LPAREN columnNameList RPAREN)? KW_AS LPAREN queryExpression RPAREN
     ;
 
 // ============================================

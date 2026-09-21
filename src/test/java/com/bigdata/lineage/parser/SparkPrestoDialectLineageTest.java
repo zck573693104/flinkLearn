@@ -500,4 +500,41 @@ class SparkPrestoDialectLineageTest {
         assertFalse(joined.isParseError(), "JOIN 之后接 LATERAL VIEW 应可解析");
         assertEquals(java.util.Set.of("ods.src_a", "ods.src_b"), joined.getSourceTables());
     }
+
+    /** LATERAL VIEW 省略行别名：列别名前的 uid 是可选项，规则不能要求它必须存在 */
+    @Test
+    void sparkLateralViewWithoutRowAlias() {
+        assertSparkLineage(
+                "INSERT INTO dwd.t_lat_bare SELECT tag FROM ods.src_lat_bare LATERAL VIEW explode(tags) AS tag",
+                "dwd.t_lat_bare", "ods.src_lat_bare");
+        assertSparkLineage(
+                "INSERT INTO dwd.t_lat_bare2 SELECT pos, tag FROM ods.src_lat_bare2 "
+                        + "LATERAL VIEW OUTER posexplode(tags) AS pos, tag",
+                "dwd.t_lat_bare2", "ods.src_lat_bare2");
+    }
+
+    /** CTE 列名清单是列级血缘的命名锚点：WITH c(a, b) AS (SELECT id, name ...) */
+    @Test
+    void sparkCteColumnAliasList() {
+        assertSparkLineage(
+                "WITH c(a, b) AS (SELECT id, name FROM ods.src_cte_alias) "
+                        + "INSERT INTO dwd.t_cte_alias SELECT a FROM c",
+                "dwd.t_cte_alias", "ods.src_cte_alias");
+        assertSparkLineage(
+                "INSERT INTO dwd.t_cte_alias2 WITH c(x, y) AS (SELECT id, name FROM ods.src_cte_alias2) "
+                        + "SELECT x FROM c",
+                "dwd.t_cte_alias2", "ods.src_cte_alias2");
+    }
+
+    @Test
+    void prestoCteColumnAliasList() {
+        assertPrestoLineage(
+                "WITH c(a, b) AS (SELECT id, name FROM ods.src_cte_alias) "
+                        + "INSERT INTO dwd.t_cte_alias SELECT a FROM c",
+                "dwd.t_cte_alias", "ods.src_cte_alias");
+        assertPrestoLineage(
+                "INSERT INTO dwd.t_cte_alias2 WITH c(x, y) AS (SELECT id, name FROM ods.src_cte_alias2) "
+                        + "SELECT x FROM c",
+                "dwd.t_cte_alias2", "ods.src_cte_alias2");
+    }
 }

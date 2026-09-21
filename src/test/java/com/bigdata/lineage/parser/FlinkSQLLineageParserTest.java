@@ -469,4 +469,25 @@ public class FlinkSQLLineageParserTest {
         Assert.assertFalse("ON 条件以限定列名结尾应可解析", lineage.isParseError());
         Assert.assertEquals(Set.of("ods.s_qc_a", "ods.s_qc_b"), lineage.getSourceTables());
     }
+
+    /**
+     * CTE 列名清单：列级血缘要靠它把外层的 c.x 映射回内层的 id，
+     * 语法不认 WITH c(x, y) AS (...) 就整条字段链都建不起来
+     */
+    @Test
+    public void testCteColumnAliasList() {
+        TableLineage inside = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_ca WITH c(x, y) AS (SELECT id, name FROM ods.s_ca) SELECT x FROM c");
+
+        Assert.assertFalse("INSERT 头部 WITH 的 CTE 带列名清单应可解析", inside.isParseError());
+        Assert.assertEquals("dwd.t_ca", inside.getTargetTable());
+        Assert.assertEquals(Set.of("ods.s_ca"), inside.getSourceTables());
+
+        TableLineage head = new TableLineageExtractor().extractFromSql(
+                "WITH c(a, b) AS (SELECT id, name FROM ods.s_cb) INSERT INTO dwd.t_cb SELECT a FROM c");
+
+        Assert.assertFalse("WITH 前置语句的 CTE 带列名清单应可解析", head.isParseError());
+        Assert.assertEquals("dwd.t_cb", head.getTargetTable());
+        Assert.assertEquals(Set.of("ods.s_cb"), head.getSourceTables());
+    }
 }
