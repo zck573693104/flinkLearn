@@ -118,29 +118,18 @@ public class TableLineageExtractor {
         }
         
         @Override
-        public Void visitCteStatement(FlinkSqlParser.CteStatementContext ctx) {
+        public Void visitWithClause(FlinkSqlParser.WithClauseContext ctx) {
             hasCte = true;
-            
-            // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表）
+
+            // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表），
+            // 再下钻：WITH 可出现在 INSERT / CREATE TABLE AS / 子查询头部，名称必须先行可见
             for (FlinkSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
                 if (cteCtx.cteName() != null) {
                     cteNames.add(cteCtx.cteName().getText().toLowerCase());
                 }
             }
-            
-            // 访问所有 CTE 定义，提取其内部查询的物理源表
-            for (FlinkSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
-                visit(cteCtx);
-            }
-            
-            // 主语句：WITH ... INSERT INTO ... 或 WITH ... SELECT ...
-            if (ctx.insertStatement() != null) {
-                visit(ctx.insertStatement());
-            } else if (ctx.queryExpression() != null) {
-                visit(ctx.queryExpression());
-            }
-            
-            return null;
+
+            return super.visitWithClause(ctx);
         }
         
         @Override

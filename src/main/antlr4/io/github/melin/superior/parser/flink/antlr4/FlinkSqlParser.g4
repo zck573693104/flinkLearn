@@ -62,8 +62,13 @@ selectStatement
 // CTE 语句 (WITH) - 血缘提取核心
 // ============================================
 
+// WITH 前置子句：挂在 queryExpression 头部，INSERT INTO ... WITH ... SELECT 也能解析
+withClause
+    : KW_WITH cteDefinition (COMMA cteDefinition)*
+    ;
+
 cteStatement
-    : KW_WITH cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
+    : withClause (insertStatement | queryExpression)
     ;
 
 cteDefinition
@@ -76,7 +81,7 @@ cteDefinition
 // ============================================
 
 queryExpression
-    : selectClause fromClause? whereClause? groupByClause? havingClause? orderByClause? limitClause?
+    : withClause? selectClause fromClause? whereClause? groupByClause? havingClause? orderByClause? limitClause?
       (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_EXCEPT (KW_DISTINCT | KW_ALL)? queryExpression)*
@@ -228,9 +233,10 @@ primaryExpression
     | LPAREN expression RPAREN
     ;
 
+// 不能用 tablePath DOT uid | uid：tablePath 内部的可选 (DOT uid)? 会把外层需要的 DOT 吞掉，
+// 导致限定列名后接 WHERE/ON 结束时报 "expecting '.'"
 columnRef
-    : tablePath DOT uid
-    | uid
+    : uid (DOT uid)*
     ;
 
 functionCall

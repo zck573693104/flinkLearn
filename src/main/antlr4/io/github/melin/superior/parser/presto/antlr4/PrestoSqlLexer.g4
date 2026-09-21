@@ -28,6 +28,8 @@ KW_CREATE: [Cc][Rr][Ee][Aa][Tt][Ee];
 KW_TABLE: [Tt][Aa][Bb][Ll][Ee];
 KW_VIEW: [Vv][Ii][Ee][Ww];
 KW_CAST: [Cc][Aa][Ss][Tt];
+// try_cast(x AS int)：带下划线的整体关键字，必须定义在 UID 之前才能抢过长标识符匹配
+KW_TRY_CAST: [Tt][Rr][Yy] '_' [Cc][Aa][Ss][Tt];
 KW_DISTINCT: [Dd][Ii][Ss][Tt][Ii][Nn][Cc][Tt];
 KW_ALL: [Aa][Ll][Ll];
 KW_TRUE: [Tt][Rr][Uu][Ee];

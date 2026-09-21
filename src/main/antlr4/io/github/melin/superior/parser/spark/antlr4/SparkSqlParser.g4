@@ -66,8 +66,14 @@ selectStatement
 // CTE 语句 (WITH) - 血缘提取核心
 // ============================================
 
+// WITH 前置子句：可挂在任意 queryExpression 头部，
+// 因此 INSERT/CREATE TABLE AS/子查询里的 CTE 都能解析，不会把 CTE 名漏成输入表
+withClause
+    : KW_WITH KW_RECURSIVE? cteDefinition (COMMA cteDefinition)*
+    ;
+
 cteStatement
-    : KW_WITH KW_RECURSIVE? cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
+    : withClause (insertStatement | queryExpression)
     ;
 
 cteDefinition
@@ -80,7 +86,7 @@ cteDefinition
 // ============================================
 
 queryExpression
-    : selectClause fromClause? whereClause? groupByClause? havingClause? 
+    : withClause? selectClause fromClause? whereClause? groupByClause? havingClause? 
       qualifyClause? distributeClause? orderByClause? distributeClause? limitClause? windowClause? pivotClause?
       (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
@@ -251,6 +257,8 @@ expression
     | expression (KW_IGNORE | KW_RESPECT) KW_NULLS
     | expression KW_OVER LPAREN windowDefinition RPAREN
     | expression KW_NOT? KW_LIKE expression
+    // Hive/Spark 正则匹配写法：col RLIKE 'x' / col NOT RLIKE 'x' / col REGEXP 'x'
+    | expression KW_NOT? (KW_RLIKE | KW_REGEXP) expression
     | (PLUS | MINUS) expression
     | expression (PLUS | MINUS | MULT | DIV | MOD) expression
     | expression (EQ | NEQ | LT | GT | LTE | GTE | CONCAT | ARROW) expression
@@ -283,9 +291,10 @@ primaryExpression
     | LPAREN expression RPAREN
     ;
 
+// 不能用 tablePath DOT uid | uid：tablePath 内部的可选 (DOT uid)? 会把外层需要的 DOT 吞掉，
+// SLL 预测一旦落到该分支就会在后续 token 上报 "mismatched input 'where' expecting '.'"
 columnRef
-    : tablePath DOT uid
-    | uid
+    : uid (DOT uid)*
     ;
 
 functionCall
@@ -294,7 +303,7 @@ functionCall
     ;
 
 castExpression
-    : KW_CAST LPAREN expression KW_AS dataType RPAREN
+    : (KW_CAST | KW_TRY_CAST) LPAREN expression KW_AS dataType RPAREN
     ;
 
 literal
@@ -350,6 +359,8 @@ alias
     ;
 
 // 函数名一律走 uid；只有同时充当子句关键字的词（IF/LEFT/RIGHT/FIRST/LAST）需显式放行
+// 类型关键字同时是构造器函数名：collect_list(struct(...)) / array(1,2) / map('k',v)
+// date(t)/timestamp(t) 是 Hive 风格的截断函数，datediff(date(substr(x,1,10)), ...) 真实存在
 functionName
     : uid
     | KW_IF
@@ -357,6 +368,12 @@ functionName
     | KW_RIGHT
     | KW_FIRST
     | KW_LAST
+    | KW_STRUCT
+    | KW_ARRAY
+    | KW_MAP
+    | KW_ROW
+    | KW_DATE
+    | KW_TIMESTAMP
     ;
 
 cteName
@@ -372,9 +389,19 @@ windowName
 
 createTableStatement
     : KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath 
-      LPAREN columnDefinition (COMMA columnDefinition)* RPAREN tableProperties?
-    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath KW_AS queryExpression
+      LPAREN columnDefinition (COMMA columnDefinition)* RPAREN createTableOption*
+    | KW_CREATE (KW_TEMPORARY | KW_TEMP)? KW_TABLE (KW_IF KW_NOT KW_EXISTS)? tablePath
+      createTableOption* KW_AS queryExpression
     | KW_CREATE KW_TEMPORARY KW_VIEW tablePath KW_AS queryExpression
+    ;
+
+// Hive 风格建表选项：CTAS 前后都会出现，且顺序不固定（comment/stored as/partitioned by/using/with/tblproperties）
+createTableOption
+    : tableProperties
+    | KW_COMMENT STRING
+    | KW_PARTITIONED KW_BY LPAREN uid dataType? (COMMA uid dataType?)* RPAREN
+    | KW_STORED KW_AS uid
+    | KW_USING uid
     ;
 
 columnDefinition

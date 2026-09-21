@@ -120,29 +120,18 @@ public class PrestoTableLineageExtractor {
         }
         
         @Override
-        public Void visitCteStatement(PrestoSqlParser.CteStatementContext ctx) {
+        public Void visitWithClause(PrestoSqlParser.WithClauseContext ctx) {
             hasCte = true;
-            
-            // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表）
+
+            // 先注册所有 CTE 名称（CTE 是临时结果集，不计入物理源表），
+            // 再下钻：WITH 可出现在 INSERT / CREATE TABLE AS / 子查询头部，名称必须先行可见
             for (PrestoSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
                 if (cteCtx.cteName() != null) {
                     cteNames.add(cteCtx.cteName().getText().toLowerCase());
                 }
             }
-            
-            // 访问所有 CTE 定义
-            for (PrestoSqlParser.CteDefinitionContext cteCtx : ctx.cteDefinition()) {
-                visit(cteCtx);
-            }
-            
-            // 访问主查询（WITH ... INSERT INTO 或 WITH ... SELECT）
-            if (ctx.insertStatement() != null) {
-                visit(ctx.insertStatement());
-            } else if (ctx.queryExpression() != null) {
-                visit(ctx.queryExpression());
-            }
-            
-            return null;
+
+            return super.visitWithClause(ctx);
         }
         
         @Override

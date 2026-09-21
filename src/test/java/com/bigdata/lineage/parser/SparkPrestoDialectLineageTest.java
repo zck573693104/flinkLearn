@@ -426,6 +426,69 @@ class SparkPrestoDialectLineageTest {
                 "dwd.t_pex", "ods.a", "ods.b");
     }
 
+    /** WITH 是 queryExpression 的前置子句：INSERT / CTAS 头部带 CTE 时 CTE 名不得成为输入表 */
+    @Test
+    void sparkCteInsideInsertAndCtasBody() {        assertSparkLineage("INSERT INTO dwd.t_wi WITH c AS (SELECT * FROM ods.s_wi) SELECT * FROM c",
+                "dwd.t_wi", "ods.s_wi");
+        assertSparkLineage("CREATE TABLE dwd.t_wc AS WITH c AS (SELECT * FROM ods.s_wc) SELECT * FROM c",
+                "dwd.t_wc", "ods.s_wc");
+        assertSparkLineage("INSERT OVERWRITE TABLE dwd.t_wn PARTITION (dt='1') "
+                        + "WITH c1 AS (SELECT * FROM ods.s_wn), c2 AS (SELECT * FROM c1) SELECT * FROM c2",
+                "dwd.t_wn", "ods.s_wn");
+    }
+
+    /**
+     * 限定列名位于子句末尾（ON 条件最后一个 token 就是 a.col）：
+     * columnRef 若写成 tablePath DOT uid，tablePath 的内部可选分支会吞掉外层需要的 DOT，
+     * 解析器报 "expecting '.'" 并靠错误恢复把 CTE 名/列名吐成输入表
+     */
+    @Test
+    void sparkQualifiedColumnEndingAJoinCondition() {
+        assertSparkLineage("INSERT INTO dwd.t_qc SELECT t1.id FROM ods.s_qc_a t1 "
+                        + "LEFT JOIN ods.s_qc_b t2 ON t1.m = t2.m AND t1.co = t2.employee_number "
+                        + "WHERE t2.perf_month BETWEEN '1' AND '2'",
+                "dwd.t_qc", "ods.s_qc_a", "ods.s_qc_b");
+        assertSparkLineage("INSERT INTO dwd.t_qd SELECT * FROM ods.s_qd a JOIN ods.s_qe b "
+                        + "ON a.k = b.k WHERE b.dt = '2024-01-01' GROUP BY b.col",
+                "dwd.t_qd", "ods.s_qd", "ods.s_qe");
+    }
+
+    /** date()/timestamp() 是 Hive 风格的截断函数，与类型关键字同名 */
+    @Test
+    void sparkDateAndTimestampAsFunctionNames() {
+        assertSparkLineage("INSERT INTO dwd.t_df SELECT datediff(date(substr(a.op, 1, 10)), date(b.en)) "
+                        + "FROM ods.s_df a JOIN ods.s_dg b ON a.id = b.id",
+                "dwd.t_df", "ods.s_df", "ods.s_dg");
+        assertSparkLineage("INSERT INTO dwd.t_ts2 SELECT timestamp(a.t) FROM ods.s_ts2 a",
+                "dwd.t_ts2", "ods.s_ts2");
+    }
+
+    /** Spark 3.4+ 的 try_cast：带下划线的整体关键字，不能退化成 UID + 非法的 AS */
+    @Test
+    void sparkTryCast() {
+        assertSparkLineage("INSERT INTO dwd.t_tc SELECT try_cast(a.x AS INT), cast(a.y AS BIGINT) FROM ods.s_tc a",
+                "dwd.t_tc", "ods.s_tc");
+    }
+
+    @Test
+    void prestoCteInsideInsertAndCtasBody() {
+        assertPrestoLineage("INSERT INTO dwd.t_pw WITH c AS (SELECT * FROM ods.s_pw) SELECT * FROM c",
+                "dwd.t_pw", "ods.s_pw");
+        assertPrestoLineage("CREATE TABLE dwd.t_pc AS WITH c AS (SELECT * FROM ods.s_pc) SELECT * FROM c",
+                "dwd.t_pc", "ods.s_pc");
+    }
+
+    /** Presto 的 ARRAY(JSON) 圆号参数化类型 + UNNEST 的 AS t(col) 列别名 */
+    @Test
+    void prestoArrayParenTypeInUnnest() {
+        assertPrestoLineage("INSERT INTO dwd.t_pu SELECT json_obj FROM ods.s_pu t1 "
+                        + "CROSS JOIN UNNEST(CAST(t1.cfg AS ARRAY(JSON))) AS t(json_obj)",
+                "dwd.t_pu", "ods.s_pu");
+        assertPrestoLineage("INSERT INTO dwd.t_pm SELECT m FROM ods.s_pm t1 "
+                        + "CROSS JOIN UNNEST(MAP(CAST(1 AS BIGINT), t1.a, CAST(2 AS BIGINT), t1.b)) AS x(m)",
+                "dwd.t_pm", "ods.s_pm");
+    }
+
     /** 词法层守护：LATERAL VIEW 这类多词关键字若写成单个词法规则，会退化成匹配 LATERALVIEW */
     @Test
     void sparkLateralViewSpelledAsTwoWordsStillParses() {

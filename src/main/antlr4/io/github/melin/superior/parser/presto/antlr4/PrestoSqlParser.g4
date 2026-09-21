@@ -52,8 +52,13 @@ selectStatement
 // CTE 语句 (WITH) - 血缘提取核心
 // ============================================
 
+// WITH 前置子句：挂在 queryExpression 头部，INSERT/CREATE TABLE AS 里带 CTE 也能解析
+withClause
+    : KW_WITH cteDefinition (COMMA cteDefinition)*
+    ;
+
 cteStatement
-    : KW_WITH cteDefinition (COMMA cteDefinition)* (insertStatement | queryExpression)
+    : withClause (insertStatement | queryExpression)
     ;
 
 cteDefinition
@@ -66,7 +71,7 @@ cteDefinition
 // ============================================
 
 queryExpression
-    : selectClause fromClause? whereClause? groupByClause? havingClause? 
+    : withClause? selectClause fromClause? whereClause? groupByClause? havingClause? 
       orderByClause? limitClause? windowClause?
       (KW_UNION (KW_DISTINCT | KW_ALL)? queryExpression
        | KW_INTERSECT (KW_DISTINCT | KW_ALL)? queryExpression
@@ -239,9 +244,10 @@ primaryExpression
     | LPAREN expression RPAREN
     ;
 
+// 不能用 tablePath DOT uid | uid：tablePath 内部的可选 (DOT uid)? 会把外层需要的 DOT 吞掉，
+// 导致限定列名后接 WHERE/ON 结束时报 "expecting '.'"
 columnRef
-    : tablePath DOT uid
-    | uid
+    : uid (DOT uid)*
     ;
 
 functionCall
@@ -250,7 +256,7 @@ functionCall
     ;
 
 castExpression
-    : KW_CAST LPAREN expression KW_AS dataType RPAREN
+    : (KW_CAST | KW_TRY_CAST) LPAREN expression KW_AS dataType RPAREN
     ;
 
 caseExpression
@@ -292,6 +298,9 @@ dataType
     | typeName LPAREN NUMBER (COMMA NUMBER)? RPAREN
     | KW_ARRAY LT dataType GT
     | KW_MAP LT dataType COMMA dataType GT
+    // CAST(x AS ARRAY(JSON)) / MAP(K,V)：Presto 的尖号与圆号两种参数化写法都合法
+    | KW_ARRAY LPAREN dataType RPAREN
+    | KW_MAP LPAREN dataType COMMA dataType RPAREN
     | KW_ROW LT rowType GT
     // Trino 的行类型写作 ROW(a INTEGER, b VARCHAR)，圆号形式才是标准写法
     | KW_ROW LPAREN rowType RPAREN
@@ -344,11 +353,15 @@ alias
     ;
 
 // 函数名一律走 uid；只有同时充当子句关键字的词（IF/LEFT/RIGHT）需显式放行
+// MAP(ARRAY[...], ARRAY[...]) / ARRAY[...] / ROW(...) 既是类型关键字也是构造器函数名
 functionName
     : uid
     | KW_IF
     | KW_LEFT
     | KW_RIGHT
+    | KW_ARRAY
+    | KW_MAP
+    | KW_ROW
     ;
 
 cteName

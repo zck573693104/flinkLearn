@@ -436,4 +436,37 @@ public class FlinkSQLLineageParserTest {
         Assert.assertTrue("TRUNCATE 不产生数据流",
                 lineage.getTargetTable() == null || lineage.getTargetTable().isEmpty());
     }
+
+    /** WITH 是 queryExpression 的前置子句：INSERT / CTAS 头部带 CTE 时 CTE 名不得成为输入表 */
+    @Test
+    public void testCteInsideInsertAndCtasBody() {
+        TableLineage insert = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_wi WITH c AS (SELECT * FROM ods.s_wi) SELECT * FROM c");
+
+        Assert.assertFalse("INSERT 头部带 WITH 应可解析", insert.isParseError());
+        Assert.assertEquals("dwd.t_wi", insert.getTargetTable());
+        Assert.assertEquals(Set.of("ods.s_wi"), insert.getSourceTables());
+
+        TableLineage ctas = new TableLineageExtractor().extractFromSql(
+                "CREATE TABLE dwd.t_wc AS WITH c AS (SELECT * FROM ods.s_wc) SELECT * FROM c");
+
+        Assert.assertFalse("CTAS 头部带 WITH 应可解析", ctas.isParseError());
+        Assert.assertEquals("dwd.t_wc", ctas.getTargetTable());
+        Assert.assertEquals(Set.of("ods.s_wc"), ctas.getSourceTables());
+    }
+
+    /**
+     * 限定列名位于子句末尾（ON 条件最后一个 token 就是 a.col）：
+     * columnRef 若写成 tablePath DOT uid，tablePath 的内部可选分支会吞掉外层需要的 DOT
+     */
+    @Test
+    public void testQualifiedColumnEndingAJoinCondition() {
+        TableLineage lineage = new TableLineageExtractor().extractFromSql(
+                "INSERT INTO dwd.t_qc SELECT t1.id FROM ods.s_qc_a t1 "
+                        + "LEFT JOIN ods.s_qc_b t2 ON t1.m = t2.m AND t1.co = t2.employee_number "
+                        + "WHERE t2.perf_month BETWEEN '1' AND '2'");
+
+        Assert.assertFalse("ON 条件以限定列名结尾应可解析", lineage.isParseError());
+        Assert.assertEquals(Set.of("ods.s_qc_a", "ods.s_qc_b"), lineage.getSourceTables());
+    }
 }
