@@ -11,9 +11,11 @@ import org.antlr.v4.runtime.Vocabulary;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -44,6 +46,20 @@ final class ColumnLineageEngine {
             "ARRAY_AGG", "STRING_AGG", "LISTAGG"
     ));
 
+    /**
+     * SQL 标准的无参关键字函数：{@code current_timestamp} 不带括号也是取值，不是列。
+     *
+     * <p>三套 grammar 都没有为它们立 token（写了 token 就等于把这些词从标识符里收走，
+     * 代价远大于收益），所以解析树里它们长得跟裸列名一模一样。绑不上又不该绑的名字在这里
+     * 一次性摘掉，否则 {@code date_format(current_timestamp, 'yyyyMMdd')} 这种写时间的列
+     * 会被报成"来源没绑定"，而它其实根本没有来源。
+     */
+    private static final Set<String> NILADIC_FUNCTIONS = new HashSet<>(Arrays.asList(
+            "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP",
+            "CURRENT_CATALOG", "CURRENT_PATH", "CURRENT_ROLE", "CURRENT_SCHEMA", "CURRENT_USER",
+            "SESSION_USER", "SYSTEM_USER"
+    ));
+
     private final String sql;
     private final ParseTree root;
     private final String[] ruleNames;
@@ -53,8 +69,14 @@ final class ColumnLineageEngine {
     private final List<ColumnEdge> edges = new ArrayList<>();
     private int pseudoCounter;
     /**
-     * 只在这条语句里成立的中间关系名：子查询（带别名时以别名登记）与 explode/unnest 的展开行。
-     * 图构建层要折掉它们，但光看名字分不出 {@code s} 是子查询还是 CTE、物理表，所以由边带着标记走。
+     * 正在收集哪几层 lambda 的形参：形参只在体内成立，出了体就不再是形参，所以按层压栈。
+     * 名字统一大写，与 {@link #isNotAColumn} 比对口径一致。
+     */
+    private final Deque<Set<String>> lambdaScopes = new ArrayDeque<>();
+    /**
+     * 只在这条语句里成立的中间关系名：子查询与 explode/unnest 的展开行。
+     * 图构建层要折掉它们，但怎么起名是这里的私事（换一种命名就会把判定带偏），
+     * 所以由边带着标记走，而不是让上层去猜形状。
      */
     private final Set<String> internalRelations = new LinkedHashSet<>();
 
@@ -348,12 +370,12 @@ final class ColumnLineageEngine {
 
         ParserRuleContext sub = childRule(ref, "queryExpression");
         if (sub != null) {
-            String alias = uidOf(childRule(ref, "alias"));
-            String subTarget = alias != null ? alias : nextPseudo("sub");
-            // 带别名时以别名登记，但它在图上仍是中间产物：先记名，边才带得走这个标记
-            internalRelations.add(subTarget);
+            // 别名只做查找键，不做图上的身份：`) t1 … ) t1` 这种逐层套同名别名在真实语料里
+            // 很常见，拿别名当身份会把两层并成一个节点，折叠时自判成环然后放弃这一跳，
+            // 字段链路就断在一个既不是表也不是可折中间站的半截名字上。
+            String subTarget = nextPseudo("sub");
             List<String> output = processQuery(sub, scope, subTarget, null);
-            scope.register(Relation.derived(subTarget, output), alias);
+            scope.register(Relation.derived(subTarget, output), uidOf(childRule(ref, "alias")));
         }
 
         ParserRuleContext lateral = childRule(ref, "lateralView");
@@ -482,8 +504,18 @@ final class ColumnLineageEngine {
             return;
         }
         if ("columnRef".equals(name)) {
-            out.add(RawRef.column(directUids((ParserRuleContext) node)));
+            List<String> names = directUids((ParserRuleContext) node);
+            if (!isNotAColumn(names)) {
+                out.add(RawRef.column(names));
+            }
             return;
+        }
+        if ("expression".equals(name)) {
+            int arrow = tokenIndex((ParserRuleContext) node, "ARROW");
+            if (arrow >= 0) {
+                collectLambda((ParserRuleContext) node, arrow, scope, out);
+                return;
+            }
         }
         if ("primaryExpression".equals(name)) {
             ParserRuleContext tablePath = childRule((ParserRuleContext) node, "tablePath");
@@ -499,6 +531,57 @@ final class ColumnLineageEngine {
         }
         for (int i = 0; i < node.getChildCount(); i++) {
             collect(node.getChild(i), scope, out);
+        }
+    }
+
+    /**
+     * 写法像列、其实不是列的标识符：无参关键字函数，以及被 lambda 形参遮蔽的名字。
+     * 两者都不可能有上游字段，留在来源里只会把一列推到 UNRESOLVED。
+     */
+    private boolean isNotAColumn(List<String> names) {
+        if (names.size() != 1) {
+            return false;
+        }
+        String only = names.get(0);
+        String upper = only.toUpperCase(Locale.ROOT);
+        if (NILADIC_FUNCTIONS.contains(upper)) {
+            return true;
+        }
+        for (Set<String> params : lambdaScopes) {
+            if (params.contains(upper)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@code x -> expr}：箭头左边是形参，只有右边是取值表达式 */
+    private void collectLambda(ParserRuleContext node, int arrow, QueryScope scope,
+                               List<RawRef> out) {
+        Set<String> params = new LinkedHashSet<>();
+        for (int i = 0; i < arrow; i++) {
+            uidLeaves(node.getChild(i), params);
+        }
+        lambdaScopes.push(params);
+        try {
+            for (int i = arrow + 1; i < node.getChildCount(); i++) {
+                collect(node.getChild(i), scope, out);
+            }
+        } finally {
+            lambdaScopes.pop();
+        }
+    }
+
+    private void uidLeaves(ParseTree node, Set<String> out) {
+        if (node == null) {
+            return;
+        }
+        if ("uid".equals(ruleName(node))) {
+            out.add(NameNormalizer.normalize(node.getText()).toUpperCase(Locale.ROOT));
+            return;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            uidLeaves(node.getChild(i), out);
         }
     }
 
@@ -776,18 +859,23 @@ final class ColumnLineageEngine {
     }
 
     private boolean hasToken(ParserRuleContext ctx, String symbolicName) {
+        return tokenIndex(ctx, symbolicName) >= 0;
+    }
+
+    /** 直接子节点里该符号 token 的位置，没有则 -1：lambda 用箭头切分形参体和取值体 */
+    private int tokenIndex(ParserRuleContext ctx, String symbolicName) {
         if (ctx == null) {
-            return false;
+            return -1;
         }
         for (int i = 0; i < ctx.getChildCount(); i++) {
             ParseTree child = ctx.getChild(i);
             if (child instanceof TerminalNode
                     && symbolicName.equals(vocabulary.getSymbolicName(
                             ((TerminalNode) child).getSymbol().getType()))) {
-                return true;
+                return i;
             }
         }
-        return false;
+        return -1;
     }
 
     private String nextPseudo(String kind) {
@@ -798,8 +886,8 @@ final class ColumnLineageEngine {
 
     /**
      * 边指向的关系是否是引擎内部的中间关系（子查询、展开行）。图构建层要折掉它们，
-     * 但名字帮不了它：带别名的子查询就以别名命名（{@code s}、{@code x}），跟 CTE、物理表
-     * 长得一样。只有这里知道哪些是中间产物，所以由引擎标出来。
+     * 但不能靠猜名字：有哪几种中间关系、名字长什么样是这里的私事，加一种新伪节点时
+     * 上层不该跟着改判定。所以由引擎标出来。
      */
     private boolean isInternal(String relation) {
         return internalRelations.contains(relation);

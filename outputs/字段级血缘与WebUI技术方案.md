@@ -189,13 +189,13 @@ public class ColumnEdge {
     ColumnDerivation derivation; // 见 4.5 枚举，confidence 由枚举给出
     String transform;        // 归一化表达式文本，如 concat(a, '-', b)
     int ordinal;             // SELECT 列表下标，用于位置对齐与证据定位
-    String jobId;            // 文件路径 + 语句序号，如 part3.sql#7；单独解析时为 null
+    String jobId;            // 文件路径 + 语句序号，如 job_03.sql#7；单独解析时为 null
     String engine;           // FLINK | SPARK | PRESTO，建边时一次写定，避免在缓存共享对象上补字段
     boolean targetInternal;  // 目标关系是不是引擎内部中间关系，图构建层据此折叠（§6）
 }
 ```
 
-`targetInternal` 是 M2 加的：带别名的子查询以别名登记，名字与 CTE、物理表同形，只有引擎知道它是中间产物，所以由边带标记而不是让下游猜名字。
+`targetInternal` 是 M2 加的：中间关系（子查询、展开行）只有引擎知道，所以由边带标记而不是让下游猜名字。M5 之后中间关系一律 `#sub/#lat/#unnest` 命名，但标记照留——判定不该抄一份起名规则（§6）。
 
 同时给 `TableLineage` 增一个字段（不复用旧 DTO）：
 
@@ -317,9 +317,10 @@ Flink 侧不需要新增星号规则（`tablePath DOT MULT` 已在 `:230`）。
 
 - `NameNormalizer.normalizeQualified(String)`（已有，M2 直接复用）：逐段去反引号/双引号 + `toLowerCase(Locale.ROOT)`；与 `MultiEngineSQLLineageParser` 缓存键 `sql.trim().toLowerCase()`（`:68`）同一口径，避免同一表两个节点。表级边与列端点在 `ColumnGraphBuilder.StatementContext` 里都先归一化再入图。
 - **中间关系折叠**：`ColumnGraphBuilder` 两趟扫每条语句——先把"引擎内部关系"的产出边收进 `StatementContext.producers`，再折叠非内部边的来源，`walk` 顺着 producers 上溯到真实关系，把 `dwd.a → s.v → dws.x` 合成一跳，完整链路留在 `ColumnLink.hops`（含被折掉的中间列）给 UI 详情面板。
-  - 关键坑：**带别名的子查询以别名登记**（`ColumnLineageEngine.registerRef` → `subTarget = alias != null ? alias : nextPseudo("sub")`），名字与 CTE、物理表完全同形，靠 `#` 前缀判断会漏掉语料里绝大多数子查询。因此由引擎在产出边时打 `ColumnEdge.targetInternal` 标记（`internalRelations` 集合在 `registerRef`/`registerExpansion` 登记），图构建层只认这个标记。
+  - 关键坑（M2 记录，**M5 已改**）：M2 曾把带别名的子查询**以别名登记**（`subTarget = alias != null ? alias : nextPseudo("sub")`），名字与 CTE、物理表同形，靠 `#` 前缀判断会漏掉语料里绝大多数子查询——因此改由引擎在产出边时打 `ColumnEdge.targetInternal` 标记（`internalRelations` 集合登记），图构建层只认这个标记。M5 发现"别名当身份"本身是错的：`) t1 … ) t1` 逐层套同名别名在真实语料里很常见，两层被并成一个节点后折叠自判成环、放弃这一跳，字段链路断在一个既不是表也不是可折中间站的半截名字上。现在**别名只做查找键、身份一律 `nextPseudo("sub")`**，标记照旧由引擎带（起名是解析层私事，加一种伪节点不该让上层改判定）。
   - 折叠后加工方式取**整条链置信度最低**的那一档（`weakest`）：外层 `IDENTITY` 套内层 `AGGREGATE` 只能是 `AGGREGATE`。
-  - 标了内部却没有产出边可折（引擎漏边）时**丢弃该跳并 log.warn**，宁缺勿假；`SqlDirLineageTool` 的"未折叠的伪节点"一节把这类残留变成可见计数（全语料当前为 0）。
+  - 标了内部却没有产出边可折（引擎漏边）时**丢弃该跳并 log.warn**，宁缺勿假；`SqlDirLineageTool` 的"未折叠的伪节点"一节把这类残留变成可见计数（`sql/` 与涉密语料当前均为 0）。
+  - **不是列的标识符**（M5）：三套 grammar 都没为 `current_timestamp` 这类无参关键字函数立 token，lambda 形参 `x -> …` 也是普通 `uid`，两者在解析树里跟裸列名同形。`collect` 下钻时按 `NILADIC_FUNCTIONS` 表与形参作用域（`lambdaScopes` 栈，体内遮蔽同名表别名）把它们摘掉，否则写时间戳的列会被报成"来源没绑上"，甚至凭空挂到作用域里唯一报不出列清单的表上。
 - **CTE 节点保留 + 语句命名空间**：CTE 是"字段来源"的关键中间站，不折叠，作为 `GraphNode.isLocal()` 节点渲染（虚线边框 + 灰底）。但 CTE 名、伪节点名、绑不上的限定符都只在语句内唯一，语料里 `tmp`/`t`/`c` 跨语句复用，所以这些名字统一登记为 `[jobId]name`（`LocalRelation`）。语句标识取 `ColumnEdge.jobId`，其次取语句文本的 SHA-256 短摘要，最后才退回列表下标——用下标会在"分文件解析再拼列表"时把两个文件的同名 CTE 接成一个节点。
 - **分层**：`LayeredDagBuilder` 先 Tarjan 缩强连通（**迭代实现**，20000 节点长链有回归测试钉住，递归 DFS 在语料规模会打穿栈），再在缩点 DAG 上跑 Kahn 最长路径得 rank；自依赖与互查表按 SCC 同层并落入 `Layers.getCyclic()`，UI 用红色回边标注。分层只跑物理表——语句内关系各自成岛。
 - `LineageStore`：`AtomicReference<Snapshot>`，`Snapshot` = 一张不可变 `LineageGraph` + 语句数 + 来源标识 + 耗时；重扫时整块替换引用，读侧无锁且一次请求内看见的必然是同一次扫描。缓存语义沿用 `SqlCache` 的 LRU 思路，但快照不做增量 diff（v1 简单可靠）。
@@ -422,21 +423,21 @@ lineage:
 图 JSON schema（Cytoscape 直接可喂）。表级与字段级共用外层形状，字段级视图的节点是列：
 
 ```json
-{ "nodes": [ {"id":"dws_pms.dws_x","name":"dws_x","db":"dws_pms","layer":3,
+{ "nodes": [ {"id":"dws_dw.dws_x","name":"dws_x","db":"dws_dw","layer":3,
               "kind":"physical","colCount":42} ],
-  "edges": [ {"id":"t:dwd_pms.dwd_a>dws_pms.dws_x","from":"dwd_pms.dwd_a",
-              "to":"dws_pms.dws_x","jobId":"part3.sql#7"} ],
-  "ranks": {"dwd_pms.dwd_a":1}, "cyclic": ["ods_x"] }
+  "edges": [ {"id":"t:dwd_dw.dwd_a>dws_dw.dws_x","from":"dwd_dw.dwd_a",
+              "to":"dws_dw.dws_x","jobId":"job_03.sql#7"} ],
+  "ranks": {"dwd_dw.dwd_a":1}, "cyclic": ["ods_x"] }
 ```
 
 ```json
 // /api/graph/column：nodes 为列，edges 为折叠后的字段边
-{ "nodes": [ {"id":"dws_pms.dws_x.emp_cnt","column":"emp_cnt","table":"dws_pms.dws_x",
+{ "nodes": [ {"id":"dws_dw.dws_x.emp_cnt","column":"emp_cnt","table":"dws_dw.dws_x",
               "name":"dws_x","local":false,"layer":3,"kind":"column"} ],
-  "edges": [ {"id":"c:..>..#AGGREGATE","from":"dwd_pms.dwd_a.emp_id","to":"dws_pms.dws_x.emp_cnt",
+  "edges": [ {"id":"c:..>..#AGGREGATE","from":"dwd_dw.dwd_a.emp_id","to":"dws_dw.dws_x.emp_cnt",
               "derivation":"AGGREGATE","confidence":0.8,"transform":"count(emp_id)",
-              "hops":["dwd_pms.dwd_a.emp_id","[part3.sql#7]#sub1.c","dws_pms.dws_x.emp_cnt"],
-              "engine":"FLINK","jobId":"part3.sql#7","ordinal":0} ],
+              "hops":["dwd_dw.dwd_a.emp_id","[job_03.sql#7]#sub1.c","dws_dw.dws_x.emp_cnt"],
+              "engine":"FLINK","jobId":"job_03.sql#7","ordinal":0} ],
   "ranks": {...}, "cyclic": [] }
 ```
 
@@ -539,7 +540,7 @@ src/main/resources/static/
 | **M2 归一化/图模型** | ✅ 已完成：`ColumnGraphBuilder` 折叠 + `ColumnEdge.targetInternal` 标记、`LocalRelation` 语句命名空间、`LayeredDagBuilder`（迭代 Tarjan+Kahn）、`LineageStore` 快照 | 228 测试全绿（新增 21）：环/自依赖、20000 节点长链、多 CTE 同名、别名解引用、hop 证据；全语料建图 17 节点/2329 列边/0 未折叠伪节点/0 缺层号 | 1d |
 | **M3 服务层** | ✅ 已完成：starter-web 2.7.18 + `CorpusScanner`（jobId=文件#序号）+ `ScanReport` 账本 + 9 个端点 + `ApiResponse`/`ApiErrorAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1）。实测细节见 §7.4 | 245 测试全绿（新增 17）；真起 jar 逐端点 `curl` 通过，overview 与 M2 基线逐项一致；0 条折叠告警；无 slf4j 双绑定 | 1d |
 | **M4 前端** | ✅ 已完成：vendor 三件套（cytoscape 3.32.1 + dagre 0.8.5 + cytoscape-dagre 2.5.0）+ 三栏 ES module（`main/api/graphTable/graphColumn/detailPanel/badges`）+ 表级 DAG 与字段链路两种图 + 右栏逐跳证据（hops/derivation/confidence/SQL 高亮/parseError 红条）+ PNG 与子图 JSON 导出 + hash 定位。实测细节见 §8.4 | `mvn -o clean test` **246 绿**；jar 内 static 21 文件、`GET /` 200；真浏览器（browser-use）表级/字段级金路径 + 300 节点超限 + 缺列 400 + parseError 红条 + 星号/未解析边界逐项通过，console 零 error；揪出 7 个前端缺陷与 1 处"把解析缺口说成链路起点"的语义谎言 | 2d |
-| **M5 语料回归** | 用忽略的临时目录跑涉密语料列级质量巡检（只本地，不落仓库），修问题 | 泄漏巡检 0；列级"编造列"0 | 1d |
+| **M5 语料回归** | ✅ 已完成：子查询身份（别名只做查找键，`#subN` 才是身份）+ 无参关键字函数与 lambda 形参不再当列（§6）。实测细节与逐条定性见 §11.1 | 涉密语料：折叠告警 62→**0**、未折叠伪节点 0、幽灵列 0、UNRESOLVED 7→**2**（两条都是 CASE ELSE 的未限定列，两张未知表 ⇒ 按"宁缺勿假"口径保留，`ambiguousUnqualifiedColumnIsNotForcedOntoATable` 已锁这个语义）；`sql/` 基线：2376 原始列边不变，图列边 2329→**2327**（4 处 `current_timestamp` 假来源），0 告警。`mvn -o clean test` **252 绿** | 1d |
 | **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理。剩余：`column_lineage` DDL 升级脚本（随 §10 持久化阶段出）、`superior-sql-parser-temp/` 待你确认删除 | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线 | 0d |
 
 合计约 7.5 人日（§2.0 的结构与文档清理已完成，不计入）。M1 与 M3 可并行（解析层不依赖 Spring）。
@@ -551,7 +552,7 @@ v1 是**内存快照 + 目录扫描**，启动即可用，无外部依赖，这�
 ```sql
 CREATE TABLE IF NOT EXISTS column_lineage (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    job_id VARCHAR(128) NOT NULL COMMENT '文件+语句标识，如 part3.sql#7',
+    job_id VARCHAR(128) NOT NULL COMMENT '文件+语句标识，如 job_03.sql#7',
     source_table VARCHAR(255) NOT NULL,
     source_column VARCHAR(255) NOT NULL,
     target_table VARCHAR(255) NOT NULL,
@@ -590,6 +591,32 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - 构建纪律（既有记忆约束）：报"通过"之前必 `mvn clean test`，不信陈旧 `target/`。
 - 涉密语料纪律：任何来自 `D:\ai coding\...` 的 SQL 只在 git 忽略的 `tmpdb/` 复现，**不复制进仓库、不写进用例、不提交**；提交前删除 `tmpdb/`（本分支截至 2026-09-21 已清空，M5 复现时重新拷贝）。
 
+### 11.1 M5 涉密语料巡检实测（2026-09-21）
+
+语料：16 个文件 / 528K（某绩效监控主题的 Spark 作业目录），拷进 git 忽略的 `tmpdb/`，`SqlDirLineageTool` 带 `--columns` 跑，输出一律落到仓库外（`D:/tmpdb-audit*.txt`）。**修完即删 `tmpdb/`；本节按 §14 的涉密纪律只留同构形状，表名/列名一律脱敏，不落原文。**
+
+修掉两个真缺口：
+
+1. **子查询把别名当身份**（`ColumnLineageEngine`）。`) t1 … ) t1` 这种逐层套同名别名在真实语料里成批出现，两层被并成同一个节点后折叠自判成环、`log.warn` 放弃这一跳——涉密语料 **62 次折叠告警**，字段链路断在半截别名上。改为别名只做查找键、身份一律 `nextPseudo("sub")`。
+2. **写法像列、其实不是列**。两种形状：`date_format(current_timestamp, 'yyyyMMddHHmmss') as 写入时间列`（无参关键字函数）与 `filter(split(某串列, '-'), x -> x like '%关键词%')`（lambda 形参）。三套 grammar 都没为前者立 token，后者本来也只是普通 `uid`，于是都进了来源清单。现在 `NILADIC_FUNCTIONS` + `lambdaScopes`（体内遮蔽同名表别名）在 `collect` 里一次摘掉。
+
+逐条定性（7 条 UNRESOLVED → 2 条）：
+
+- 4 条写入时间列 + 1 条高阶函数计数列：**解析缺口**，已修。前者变成 `CONSTANT`、零来源；后者只剩它真正读的那一列。
+- 2 条同一个 CTE 里的 `before/after_*_flag` 对偶列：**真实语义，按约定不猜**。CASE 的 `ELSE` 分支未加限定，而该作用域里有两张都没报出列清单的物理表——没有列字典就是歧义，`ambiguousUnqualifiedColumnIsNotForcedOntoATable` 早就把这个口径钉成测试了。
+- 1 个环上表：**真实自依赖**（排班日志类作业，`INSERT OVERWRITE` 的输入清单里就有它自己），不是解析产物；`LayeredDagBuilder` 按 SCC 同层处理并计入 `cyclic`，UI 用红色回边显示。
+
+修复效果的口径：
+
+- 涉密语料：折叠告警 62→0，未折叠伪节点 0，幽灵列 0，UNRESOLVED 7→2，节点 269（语句内关系 185 / 物理表 84）不变，图列边 4110→3951（−159：−153 来自套别名折叠恢复，链路合成一跳后不再经由被并节点的重复边；−6 来自假来源，按 `from>to>derivation` 去重后合并）。**原始列边 4012 一条不差**——没有丢血缘，只是不再伪造。
+- `sql/` 公开语料：2376 原始列边不变，图列边 2329→2327（`current_timestamp` 假来源 4 处），0 告警、0 泄漏、0 未解析、17 节点/6 表边/maxLayer 1 全不变。
+- `mvn -o clean test` **252 绿**（M4 收尾 246 + 套别名 1 + Spark 无参/lambda/形参遮蔽 3 + Presto lambda/括号形式 2）。
+
+巡检口径的两条教训（比数字更有价值）：
+
+- **"未折叠的伪节点"必须是 0 才算过关**这条此前是假绿：它按节点 id 里有没有 `#` 判定，而别名登记的子查询根本没有 `#`，于是报 0 的同时 62 次折叠失败无人看见。
+- **UNRESOLVED 账本只看得见"绑不上"的**：`current_timestamp` 共出现 31 次，只有 4 次没绑上进了账本，另外 **27 次被错绑到真实表/CTE 上**（其中 23 次挂到同一张 CTE），是编造出来的来源列，账本、幽灵列巡检、UI 全都不报警。补的做法是对全语料的**来源列名多重集合**做修复前后 diff——本次 diff 只少掉 `current_timestamp` 与 `x` 两类共 30 个引用，其余一列未动，才敢说"没顺手删掉真血缘"。复现脚本口径：`grep -ao "column=[a-z0-9_]*" 审计报告 | sort | uniq -c` 两份一比即可，无需列字典。
+
 ## 12. 风险与权衡
 
 | 风险 | 影响 | 处置 |
@@ -617,10 +644,10 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-- [x] 1. **基线（M4 后）**：`mvn -o clean test` **246/246**、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这三条不被破坏。
+- [x] 1. **基线（M5 后）**：`mvn -o clean test` **252/252**、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN（那 3 条是语料里故意残缺的 DDL）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
 - [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。**像素级观感仍待人眼过一遍**（验证用的 in-app Browser 是 0x0 视口，只能读结构与文本）。
 - [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
 - [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。
 - [x] 5. `SELECT *` 边显示 `STAR · 星号未展开` 徽标 + 图例色块 + 30% 置信度；`UNRESOLVED` 边在 `/api/issues`、左栏质量过滤、字段清单徽标与右栏红条四处都可见——第 3、4 处是本轮补验时才修出来的，见 §8.4。
-- [ ] 6. 涉密语料巡检（M5）：列级 6 条 oracle 泄漏计数为 0，`tmpdb/` 已删除。
+- [x] 6. 涉密语料巡检（M5）：两份语料（`sql/` 与临时语料）列级 6 条 oracle 泄漏计数均为 0，折叠告警 0，剩下 2 条 UNRESOLVED 已定性为"没有列字典就是歧义、按约定不猜"；临时目录已删除，文档与用例里的表名列名一律脱敏（实测见 §11.1）。
 - [x] 7. 本方案入库为 `outputs/` 下唯一现行设计文档；两份旧 Calcite 路线文档已删除，作废理由保留在 §0。

@@ -5,7 +5,6 @@ import com.bigdata.lineage.parser.extractor.TableLineageExtractor;
 import com.bigdata.lineage.parser.model.ColumnDerivation;
 import com.bigdata.lineage.parser.model.ColumnEdge;
 import com.bigdata.lineage.parser.model.ColumnRef;
-import com.bigdata.lineage.parser.model.ColumnRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -140,7 +139,8 @@ class FlinkColumnLineageTest {
     @Test
     void subqueryAndUnionBranches() {
         ColumnAssert sub = check("INSERT INTO dwd.tgt SELECT x.id FROM (SELECT id FROM ods.src) x");
-        sub.sources("x", "id", "ods.src.id").sources("dwd.tgt", "id", "x.id");
+        String relation = sub.pseudoTable("#sub");
+        sub.sources(relation, "id", "ods.src.id").sources("dwd.tgt", "id", relation + ".id");
 
         ColumnAssert union = check("INSERT INTO dwd.tgt SELECT a FROM ods.s1 "
                 + "UNION ALL SELECT b AS a FROM ods.s2");

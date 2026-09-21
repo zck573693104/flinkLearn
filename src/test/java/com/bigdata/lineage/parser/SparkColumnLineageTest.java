@@ -102,6 +102,33 @@ class SparkColumnLineageTest {
                 .sources("dwd.tgt", "b");
     }
 
+    /**
+     * {@code current_timestamp} 不带括号也是取值：三套语法都没为它立 token，解析树里它跟裸列名
+     * 同形，绑不上就把整列推成 UNRESOLVED，写时间戳的列因此全都成了"待人工确认"。
+     */
+    @Test
+    void niladicKeywordFunctionHasNoSource() {
+        check("INSERT INTO dwd.tgt SELECT date_format(current_timestamp, 'yyyyMMddHHmmss') AS insert_time FROM ods.src")
+                .sources("dwd.tgt", "insert_time")
+                .derivation("dwd.tgt", "insert_time", ColumnDerivation.CONSTANT)
+                .transformContains("dwd.tgt", "insert_time", "current_timestamp");
+    }
+
+    /** lambda 形参只在体内成立：{@code x -> x like '%a%'} 的两个 x 都不是列 */
+    @Test
+    void lambdaParameterIsNotAColumn() {
+        check("INSERT INTO dwd.tgt SELECT cardinality(filter(split(t.tag_list, '-'), x -> x like '%out%')) AS out_cnt FROM ods.src t")
+                .sources("dwd.tgt", "out_cnt", "ods.src.tag_list")
+                .derivation("dwd.tgt", "out_cnt", ColumnDerivation.EXPRESSION);
+    }
+
+    /** 形参遮蔽同名的表别名时，体内那次引用不能算回表上 */
+    @Test
+    void lambdaParameterShadowsTheOuterAlias() {
+        check("INSERT INTO dwd.tgt SELECT cardinality(filter(split(s.tags, ','), s -> s = 'x')) AS n FROM ods.src s")
+                .sources("dwd.tgt", "n", "ods.src.tags");
+    }
+
     // ============================================
     // 目标列命名：INSERT 列名清单优先，其次别名，最后才承认猜不到
     // ============================================
@@ -164,9 +191,11 @@ class SparkColumnLineageTest {
 
     @Test
     void aliasedSubqueryBecomesRelation() {
-        check("INSERT INTO dwd.tgt SELECT x.xid FROM (SELECT id AS xid FROM ods.src) x")
-                .sources("x", "xid", "ods.src.id")
-                .sources("dwd.tgt", "xid", "x.xid")
+        ColumnAssert result =
+                check("INSERT INTO dwd.tgt SELECT x.xid FROM (SELECT id AS xid FROM ods.src) x");
+        String sub = result.pseudoTable("#sub");
+        result.sources(sub, "xid", "ods.src.id")
+                .sources("dwd.tgt", "xid", sub + ".xid")
                 .noGhostColumns();
     }
 
@@ -183,11 +212,29 @@ class SparkColumnLineageTest {
 
     @Test
     void siblingSubqueriesDoNotShareAliases() {
-        check("INSERT INTO dwd.tgt SELECT u.id FROM (SELECT id FROM ods.a) u "
-                + "JOIN (SELECT id FROM ods.b) v ON u.id = v.id")
-                .sources("u", "id", "ods.a.id")
-                .sources("v", "id", "ods.b.id")
-                .sources("dwd.tgt", "id", "u.id");
+        ColumnAssert result = check("INSERT INTO dwd.tgt SELECT u.id FROM "
+                + "(SELECT id FROM ods.a) u JOIN (SELECT id FROM ods.b) v ON u.id = v.id");
+        List<String> subs = result.pseudoTables("#sub");
+        assertEquals(2, subs.size(), "两个兄弟子查询要两个身份: " + subs);
+        result.sources(subs.get(0), "id", "ods.a.id")
+                .sources(subs.get(1), "id", "ods.b.id")
+                .sources("dwd.tgt", "id", subs.get(0) + ".id");
+    }
+
+    /**
+     * 逐层套同一个别名（{@code ) t1 … ) t1}）是真实语料里最常见的写法：内层不能被外层顶掉，
+     * 两层也就各自只有一个身份。否则会产出一条 {@code t1.id -> t1.id} 的自依赖边，
+     * 建图时整条链路被判成环、折叠放弃，字段来源断在一个既不是表也不是可折中间站的半截名字上。
+     */
+    @Test
+    void nestedSubqueriesSharingOneAliasKeepSeparateIdentities() {
+        ColumnAssert result = check("INSERT INTO dws.tgt SELECT t1.a FROM "
+                + "(SELECT t1.a FROM (SELECT src.a AS a FROM ods.src) t1) t1");
+        List<String> subs = result.pseudoTables("#sub");
+        assertEquals(2, subs.size(), "同名嵌套别名要两层各一个身份: " + subs);
+        result.sources(subs.get(0), "a", "ods.src.a")
+                .sources(subs.get(1), "a", subs.get(0) + ".a")
+                .sources("dws.tgt", "a", subs.get(1) + ".a");
     }
 
     @Test
@@ -312,10 +359,11 @@ class SparkColumnLineageTest {
     /** 内层自己就有表却容不下这列，那是真歧义，不该回头去问外层作用域 */
     @Test
     void innerScopeDoesNotBorrowTheOuterTableForItsOwnColumns() {
-        check("INSERT INTO dwd.tgt SELECT x.v FROM "
-                + "(SELECT v FROM ods.p JOIN ods.q ON p.k = q.k) x JOIN ods.r ON x.v = r.id")
-                .derivation("x", "v", ColumnDerivation.UNRESOLVED)
-                .sources("x", "v", "v");
+        ColumnAssert result = check("INSERT INTO dwd.tgt SELECT x.v FROM "
+                + "(SELECT v FROM ods.p JOIN ods.q ON p.k = q.k) x JOIN ods.r ON x.v = r.id");
+        String sub = result.pseudoTable("#sub");
+        result.derivation(sub, "v", ColumnDerivation.UNRESOLVED)
+                .sources(sub, "v", "v");
     }
 
     /** 限定符是库/表命名空间的一部分时，首段不是列名，不能当成字段路径的根 */

@@ -55,8 +55,8 @@ class ColumnGraphBuilderTest {
         assertEquals("ods.src.a", link.getFrom());
         assertEquals(ColumnDerivation.EXPRESSION, link.getDerivation());
         assertEquals(3, link.getHops().size(), "证据里要留被折掉的中间列");
-        // 带别名的子查询以别名登记，折叠后它只剩这一跳证据：图上没有 s 这个节点
-        assertTrue(link.getHops().get(1).endsWith("]s.v"), link.getHops().toString());
+        // 子查询在图上的身份是伪节点而不是别名（s），折叠后它只剩这一跳证据：图上没有 s 这个节点
+        assertTrue(link.getHops().get(1).endsWith("]#sub1.v"), link.getHops().toString());
     }
 
     /** 折过聚合之后的直通列不能再当 IDENTITY 看：置信度取整条链最低的那一档 */

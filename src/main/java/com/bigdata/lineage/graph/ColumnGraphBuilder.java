@@ -26,8 +26,8 @@ import java.util.Set;
  * <p>解析层刻意只在**一条语句内部**绑定列；跨语句、跨跳的链路在这里拼，因为只有图构建层
  * 看得见全部语句。两件事必须在这一层做掉：
  * <ul>
- *   <li>子查询与 explode/unnest 的展开行是列绑定的中间产物，不是用户认识的表（带别名的子查询
- *       就以别名登记），由引擎标成中间关系后折成一跳，完整链路留在 {@link ColumnLink#getHops()}
+ *   <li>子查询与 explode/unnest 的展开行是列绑定的中间产物，不是用户认识的表，
+ *       由引擎标成中间关系后折成一跳，完整链路留在 {@link ColumnLink#getHops()}
  *       里给 UI 当证据；</li>
  *   <li>CTE 名与伪节点名只在语句内唯一，{@code tmp}、{@code t} 这类名字在语料里跨语句复用，
  *       不加语句命名空间就会把两条无关的链路接成一个节点。CTE 本身不折叠——它是字段来源的中间站。</li>
@@ -189,7 +189,7 @@ public final class ColumnGraphBuilder {
             List<ColumnEdge> producers = st.producers.get(id);
             if (producers == null || producers.isEmpty()) {
                 if (st.isInternal(resolved)) {
-                    // 中间关系上找不到产出边就宁缺勿假：它的名字（可能是子查询别名）不是用户认识的表
+                    // 中间关系上找不到产出边就宁缺勿假：折不开它就是把它当成用户认识的表
                     log.warn("中间关系 {} 没有产出边可折，丢弃这一跳来源", id);
                 } else {
                     emit(resolved, ref.getColumn(), carried, id, ancestors);

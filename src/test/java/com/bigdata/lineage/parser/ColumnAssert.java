@@ -107,6 +107,18 @@ final class ColumnAssert {
         return null;
     }
 
+    /** 以 {@code prefix} 命名的全部伪关系，按出现顺序去重：嵌套同名别名要逐个对上身份 */
+    List<String> pseudoTables(String prefix) {
+        List<String> names = new ArrayList<>();
+        for (ColumnEdge edge : edges) {
+            String table = edge.getTargetTable();
+            if (table != null && table.startsWith(prefix) && !names.contains(table)) {
+                names.add(table);
+            }
+        }
+        return names;
+    }
+
     /**
      * 泄漏体检：每个端点的列名必须在原句里真实出现，伪节点与占位列除外。
      * 这是列级版本的"幽灵表"检查——作用域一旦串台，这里就会红。

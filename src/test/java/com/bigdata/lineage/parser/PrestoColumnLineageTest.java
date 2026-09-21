@@ -128,6 +128,25 @@ class PrestoColumnLineageTest {
                 .noGhostColumns();
     }
 
+    /** 高階函数写法是 Presto 的常规操作：{@code x -> ...} 里的 x 是形参，绑不到任何表 */
+    @Test
+    void lambdaParameterIsNotAColumn() {
+        check("INSERT INTO dwd.tgt SELECT CARDINALITY(FILTER(SPLIT(tags, ','), x -> x <> 'a')) AS n "
+                + "FROM ods.src")
+                .sources("dwd.tgt", "n", "ods.src.tags")
+                .derivation("dwd.tgt", "n", ColumnDerivation.EXPRESSION)
+                .noGhostColumns();
+    }
+
+    /** 括号形式（{@code current_timestamp()}）本来就是函数，别把无参关键字那一套扩到它身上 */
+    @Test
+    void parenthesizedNiladicFunctionIsStillNotAColumn() {
+        check("INSERT INTO dwd.tgt SELECT date_format(current_timestamp(), 'yyyyMMdd') AS d "
+                + "FROM ods.src")
+                .sources("dwd.tgt", "d")
+                .derivation("dwd.tgt", "d", ColumnDerivation.CONSTANT);
+    }
+
     @Test
     void windowFunctionIsAggregateAndCarriesItsKeys() {
         check("INSERT INTO dwd.tgt SELECT id, "
@@ -161,7 +180,8 @@ class PrestoColumnLineageTest {
     @Test
     void subqueryAndUnionBranches() {
         ColumnAssert sub = check("INSERT INTO dwd.tgt SELECT x.id FROM (SELECT id FROM ods.src) x");
-        sub.sources("x", "id", "ods.src.id").sources("dwd.tgt", "id", "x.id");
+        String relation = sub.pseudoTable("#sub");
+        sub.sources(relation, "id", "ods.src.id").sources("dwd.tgt", "id", relation + ".id");
 
         ColumnAssert union = check("INSERT INTO dwd.tgt SELECT a FROM ods.s1 "
                 + "UNION ALL SELECT b FROM ods.s2");

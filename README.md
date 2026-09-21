@@ -13,7 +13,7 @@
 ## 构建与测试
 
 ```bash
-mvn -o clean test          # 246 个用例
+mvn -o clean test          # 252 个用例
 ```
 
 `clean` 是必要的：解析器由 `.g4` 生成到 `target/generated-sources`，改过语法文件后不清理会用到陈旧产物。
@@ -25,7 +25,19 @@ run-lineage.bat            # 解析 ./sql
 run-lineage.bat D:\dw\sql  # 解析任意目录（Windows 路径不能含空格）
 ```
 
-输出每条语句的 `[类型] 输出: X <- 输入: a, b`，末尾给去重汇总：输出表清单、纯输入表清单（未出现在任何输出表中的表）。
+输出每条语句的 `[类型] 输出: X <- 输入: a, b`，末尾给去重汇总：输出表清单、纯输入表清单（未出现在任何输出表中的表）、字段级体检（幽灵列/UNRESOLVED/STAR）与血缘图体检（未折叠伪节点、缺层号物理表）。
+
+要看每条字段边的来源清单，直接给工具加 `--columns`（`run-lineage.bat` 只转发目录参数）：
+
+```bash
+MAVEN_OPTS=-Dfile.encoding=UTF-8 mvn -o compile \
+  org.codehaus.mojo:exec-maven-plugin:3.1.1:java \
+  -Dexec.mainClass=com.bigdata.lineage.tools.SqlDirLineageTool \
+  -Dexec.args="sql --columns"
+```
+
+改完解析逻辑再核对图边数时，比对两份报告的**来源列名多重集合**比看计数靠谱：
+`grep -ao "column=[a-z0-9_]*" 报告 | sort | uniq -c`。计数变化说得清"少了几个节点"，只有这份 diff 能说清"没顺手删掉真列"。
 
 ## 起 WebUI
 
@@ -69,11 +81,12 @@ outputs/                                           方案与总结文档
 - **血缘只依赖 ANTLR 解析结果**，不引入正则或字符串猜测式的旁路解析。
 - 语法有错误时 ANTLR 会做错误恢复并产出部分结果，这类结果 `parseError=true`、`confidence=0.5`，调用方必须区分对待。
 - 词法保留字要成对维护：`.g4` 里 Parser 引用但 Lexer 未定义 → 隐式 token 告警；Lexer 定义但 Parser 未引用 → 该词无法再作为标识符使用，会静默吞掉列名/表名。
+- 反过来也有"看着像列其实不是列"的：`current_timestamp` 这类无参关键字函数（三套语法都没为它立 token）与 lambda 形参 `x -> …`，在解析树里就是普通 `uid`。它们在 `ColumnLineageEngine` 的 `NILADIC_FUNCTIONS` 与形参作用域里被摘掉——别在 grammar 里给它们加 token，那等于把这些词从标识符里收走。
 
 ## 下一步
 
-字段级血缘 + WebUI（M0 语法缺口 → M4 前端）已落地，设计、口径与逐里程碑实测见
-[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。剩下的：M5 真实语料的列级质量巡检、M6 残留收敛（`column_lineage` 落库 DDL 预案见方案 §10）。
+字段级血缘 + WebUI（M0 语法缺口 → M5 真实语料巡检）已落地，设计、口径与逐里程碑实测见
+[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。剩下的只有 M6 尾巴：`column_lineage` 落库 DDL（预案见方案 §10）。
 
 ## 历史
 
