@@ -4,8 +4,10 @@ import com.bigdata.lineage.parser.model.TableLineage;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -21,18 +23,25 @@ public final class LineageStore {
     /**
      * 重扫完成后一次性换掉整张图与账本。
      *
-     * @param sqlByJob 语句标识 → 原文，供边面板回显 SQL；键必须与图内 {@code ColumnLink.getJobId()} 一致
+     * @param sqlByJob       语句标识 → 原文，供边面板回显 SQL；键必须与图内 {@code ColumnLink.getJobId()} 一致
+     * @param parseErrorJobs 语法错误恢复出来的语句标识：这类语句的血缘是部分结果，UI 要标红
      */
     public void replace(List<TableLineage> statements, ScanReport report, String source,
-                        Map<String, String> sqlByJob, long durationMillis) {
+                        Map<String, String> sqlByJob, Set<String> parseErrorJobs,
+                        long durationMillis) {
         ref.set(new Snapshot(ColumnGraphBuilder.build(statements),
                 report == null ? ScanReport.empty() : report, source,
-                immutable(sqlByJob), durationMillis));
+                immutable(sqlByJob), immutable(parseErrorJobs), durationMillis));
     }
 
     private static Map<String, String> immutable(Map<String, String> source) {
         return source == null ? Collections.<String, String>emptyMap()
                 : Collections.unmodifiableMap(new LinkedHashMap<>(source));
+    }
+
+    private static Set<String> immutable(Set<String> source) {
+        return source == null ? Collections.<String>emptySet()
+                : Collections.unmodifiableSet(new LinkedHashSet<>(source));
     }
 
     public Snapshot current() {
@@ -47,20 +56,23 @@ public final class LineageStore {
     public static final class Snapshot {
 
         private static final Snapshot EMPTY = new Snapshot(LineageGraph.empty(),
-                ScanReport.empty(), "", Collections.<String, String>emptyMap(), 0L);
+                ScanReport.empty(), "", Collections.<String, String>emptyMap(),
+                Collections.<String>emptySet(), 0L);
 
         private final LineageGraph graph;
         private final ScanReport report;
         private final String source;
         private final Map<String, String> sqlByJob;
+        private final Set<String> parseErrorJobs;
         private final long durationMillis;
 
         Snapshot(LineageGraph graph, ScanReport report, String source,
-                 Map<String, String> sqlByJob, long durationMillis) {
+                 Map<String, String> sqlByJob, Set<String> parseErrorJobs, long durationMillis) {
             this.graph = graph;
             this.report = report;
             this.source = source;
             this.sqlByJob = sqlByJob;
+            this.parseErrorJobs = parseErrorJobs;
             this.durationMillis = durationMillis;
         }
 
@@ -81,6 +93,11 @@ public final class LineageStore {
         /** 语句原文；扫描器没登记过这条语句时返回 null，面板据此留白而不是造一段假 SQL */
         public String sqlOf(String jobId) {
             return jobId == null ? null : sqlByJob.get(jobId);
+        }
+
+        /** 这条语句是 ANTLR 错误恢复的部分结果：它给出的血缘只能当线索，不能当结论 */
+        public boolean isParseError(String jobId) {
+            return jobId != null && parseErrorJobs.contains(jobId);
         }
 
         public long getDurationMillis() {

@@ -1,6 +1,6 @@
 # 多引擎 SQL 血缘解析（ANTLR4）
 
-基于 ANTLR4 的 SQL 表级血缘提取工具，支持 **Flink / Spark / Presto** 三种方言，纯语法树遍历，不依赖 Calcite、Flink Planner 或任何外部 SQL 解析 jar。
+基于 ANTLR4 的 SQL 表级 + 字段级血缘提取工具，支持 **Flink / Spark / Presto** 三种方言，纯语法树遍历，不依赖 Calcite、Flink Planner 或任何外部 SQL 解析 jar。带一个离线可跑的 WebUI：表层级 DAG + 字段来源链路，图上每条边都能回溯到原始 SQL。
 
 ## 环境
 
@@ -13,7 +13,7 @@
 ## 构建与测试
 
 ```bash
-mvn -o clean test          # 125 个用例
+mvn -o clean test          # 246 个用例
 ```
 
 `clean` 是必要的：解析器由 `.g4` 生成到 `target/generated-sources`，改过语法文件后不清理会用到陈旧产物。
@@ -27,6 +27,18 @@ run-lineage.bat D:\dw\sql  # 解析任意目录（Windows 路径不能含空格�
 
 输出每条语句的 `[类型] 输出: X <- 输入: a, b`，末尾给去重汇总：输出表清单、纯输入表清单（未出现在任何输出表中的表）。
 
+## 起 WebUI
+
+```bash
+mvn -o package -DskipTests
+java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar                # 默认扫描 ./sql
+java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar --lineage.scan-dir=D:\dw\sql
+```
+
+打开 `http://localhost:8080`。图渲染用的 Cytoscape / dagre 已经 vendor 进 `src/main/resources/static/vendor/`（见该目录 `README.md` 的版本与来源），**没有 CDN、没有 npm 构建步骤**，内网离线可用。
+
+只想要接口不要页面的话：`GET /api/overview`、`/api/tables`、`/api/graph/table`、`/api/graph/column`、`/api/table/{t}/columns`、`/api/edge/column`、`/api/issues` 全部只读，`POST /api/parse` 收一段 SQL 返回试解析结果（不落快照），`POST /api/scan` 是唯一会换快照的写操作（可带 `{"dir":"..."}`）。契约与字段口径写在方案 §7.3。
+
 ## 目录结构
 
 ```
@@ -37,10 +49,16 @@ src/main/java/com/bigdata/lineage/
   parser/FlinkSQLLineageParser.java                单引擎门面
   parser/SqlSplitUtils.java                        注释/引号感知的语句切分
   parser/SqlCache.java                             LRU 结果缓存
-  parser/extractor/*TableLineageExtractor.java     三方言 Visitor，血缘提取核心
-  parser/model/TableLineage.java                   血缘结果模型（含 confidence / parseError）
+  parser/extractor/*TableLineageExtractor.java     三方言 Visitor，表级血缘提取核心
+  parser/extractor/ColumnLineageEngine.java        字段级血缘引擎，规则名驱动，三方言共用一份
+  parser/scope/{QueryScope,Relation}.java          列绑定的作用域栈（CTE / 子查询 / 伪关系）
+  parser/model/{TableLineage,ColumnEdge,ColumnRef}.java   结果模型（含 confidence / parseError）
+  graph/                                           归一化图模型：折叠中间关系、分层 Tarjan+Kahn、不可变快照
+  web/CorpusScanner.java                           目录扫描，jobId = 相对路径#语句序号
+  web/api/LineageApiController.java                只读查询端点
   tools/SqlDirLineageTool.java                     目录批量解析 CLI
-src/test/java/com/bigdata/lineage/parser/          表级血缘与切分回归
+src/main/resources/static/                         前端：无框架、无打包，ES module 直出
+src/test/java/com/bigdata/lineage/                 表级/字段级/切分/Web 四层回归
 sql/                                               离线数仓语料 + 建表脚本
 outputs/                                           方案与总结文档
 ```
@@ -54,8 +72,8 @@ outputs/                                           方案与总结文档
 
 ## 下一步
 
-字段级血缘 + WebUI 展示（表层级 DAG + 字段来源链路）的设计见
-[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。
+字段级血缘 + WebUI（M0 语法缺口 → M4 前端）已落地，设计、口径与逐里程碑实测见
+[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。剩下的：M5 真实语料的列级质量巡检、M6 残留收敛（`column_lineage` 落库 DDL 预案见方案 §10）。
 
 ## 历史
 

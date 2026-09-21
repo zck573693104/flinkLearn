@@ -78,8 +78,9 @@ public class LineageApiController {
     public ApiResponse tables(@RequestParam(required = false) String q,
                               @RequestParam(required = false) Integer layer,
                               @RequestParam(required = false) boolean onlyUnresolved) {
-        LineageGraph graph = store.current().getGraph();
-        Set<String> dirty = dirtyTables(graph);
+        LineageStore.Snapshot snapshot = store.current();
+        LineageGraph graph = snapshot.getGraph();
+        Set<String> dirty = dirtyTables(graph, snapshot.getReport());
         List<Map<String, Object>> rows = new ArrayList<>();
         String needle = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);
         for (GraphNode node : graph.getNodes().values()) {
@@ -125,6 +126,7 @@ public class LineageApiController {
             json.put("id", id);
             json.put("sourceCount", sources.size());
             json.put("consumerCount", targets.size());
+            json.put("unresolvedSource", snapshot.getReport().hasUnresolvedSource(id));
             json.put("sources", evidence(sources, snapshot));
             json.put("consumers", ids(targets, true));
             columns.add(json);
@@ -252,13 +254,14 @@ public class LineageApiController {
         return json;
     }
 
-    /** 边列表 → 证据 JSON；带上下文的入口（字段清单、单条边）才能补 sqlText */
+    /** 边列表 → 证据 JSON；带上下文的入口（字段清单、单条边）才能补 SQL 原文与可信度提示 */
     private static List<Map<String, Object>> evidence(List<ColumnLink> links,
                                                      LineageStore.Snapshot snapshot) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (ColumnLink link : links) {
             Map<String, Object> json = GraphAssembler.edgeJson(link);
             json.put("sqlText", snapshot.sqlOf(link.getJobId()));
+            json.put("parseError", snapshot.isParseError(link.getJobId()));
             rows.add(json);
         }
         return rows;
@@ -273,7 +276,7 @@ public class LineageApiController {
     }
 
     /** 有 UNRESOLVED / STAR 边的关系：质量视图的"哪些表需要人工确认" */
-    private static Set<String> dirtyTables(LineageGraph graph) {
+    private static Set<String> dirtyTables(LineageGraph graph, ScanReport report) {
         Set<String> dirty = new LinkedHashSet<>();
         for (ColumnLink link : graph.getColumnLinks()) {
             ColumnDerivation derivation = link.getDerivation();
@@ -282,7 +285,17 @@ public class LineageApiController {
                 dirty.add(link.getFromTable());
             }
         }
+        // 来源没绑上的边根本进不了图，只在账本里留了个字段标识
+        for (String columnId : report.getUnresolvedTargets()) {
+            dirty.add(tableOf(columnId));
+        }
         return dirty;
+    }
+
+    /** 字段标识 {@code table.column} 的表前缀：末段才是列名，所以只在最后一个点处切 */
+    private static String tableOf(String columnId) {
+        int dot = columnId.lastIndexOf('.');
+        return dot < 0 ? columnId : columnId.substring(0, dot);
     }
 
     /** 既没有上游也没有下游的物理表：多半是漏解析或语料本身只提到一次 */

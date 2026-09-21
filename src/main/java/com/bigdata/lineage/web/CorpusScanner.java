@@ -18,8 +18,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -76,6 +78,7 @@ public class CorpusScanner implements ApplicationRunner {
 
         List<TableLineage> statements = new ArrayList<>();
         Map<String, String> sqlByJob = new LinkedHashMap<>();
+        Set<String> parseErrorJobs = new LinkedHashSet<>();
         List<String> withoutLineage = new ArrayList<>();
         for (Path file : files) {
             String relative = root.relativize(file).toString().replace('\\', '/');
@@ -85,12 +88,16 @@ public class CorpusScanner implements ApplicationRunner {
                 String jobId = relative + "#" + (i + 1);
                 stamp(lineage, jobId);
                 sqlByJob.put(jobId, lineage.getOriginalSql());
+                if (lineage.isParseError()) {
+                    parseErrorJobs.add(jobId);
+                }
                 statements.add(lineage);
             }
         }
 
         ScanReport report = ScanReport.of(files.size(), withoutLineage, statements);
-        store.replace(statements, report, root.toString(), sqlByJob, System.currentTimeMillis() - start);
+        store.replace(statements, report, root.toString(), sqlByJob, parseErrorJobs,
+                System.currentTimeMillis() - start);
         log.info("扫描 {} 完成：{} 个文件、{} 条血缘语句、{} 条字段边，用时 {}ms",
                 root, files.size(), report.getStatementCount(),
                 store.graph().getColumnLinks().size(), System.currentTimeMillis() - start);

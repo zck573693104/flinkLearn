@@ -405,7 +405,7 @@ lineage:
 | GET | `/api/graph/table` | 表级分层 DAG | `root`（空=全量）、`direction=up\|down\|both`、`depth`（默认 2，上限 8） |
 | GET | `/api/table/{table:.+}/columns` | 该表字段清单 + 每字段直接来源（带证据）与去向 | — |
 | GET | `/api/graph/column` | 字段级链路子图 | `table`、`column`（可空=整表）、`depth`（默认 3） |
-| GET | `/api/edge/column` | 单条边的证据 | `from`、`to` → `[{jobId,ordinal,engine,derivation,transform,hops[],sqlText,confidence}]` |
+| GET | `/api/edge/column` | 单条边的证据 | `from`、`to` → `[{jobId,ordinal,engine,derivation,transform,hops[],sqlText,parseError,confidence}]` |
 | GET | `/api/issues` | 质量视图 | `type=all\|parseError\|unresolved\|star\|noLineage\|orphan` |
 | POST | `/api/parse` | 贴 SQL 试解析（只读、不落库） | `{sql}` → `{statements,graph,columnEdges}` |
 | POST | `/api/scan` | 重扫目录，原子换快照 | `{dir?}` → 新统计 |
@@ -440,49 +440,95 @@ lineage:
   "ranks": {...}, "cyclic": [] }
 ```
 
+证据字段的四条口径（前端实现期踩过，写死在这里）：
+
+- `ordinal` 是 **0 起**的 SELECT 下标（`app_name=0`、`app_version=1`），界面要显示"第几位"必须 +1。
+- `unresolvedSource` 是 `/api/table/{t}/columns` 每个字段的布尔位：`sourceCount=0` 有两种可能——真是源表起点，或来源没绑上、边被 `ColumnGraphBuilder` 丢在图外。图分不出来，只有扫描期的 `ScanReport.unresolvedTargets` 分得出，所以这个标记必须由账本下发，面板不许把 `↑0` 直接说成"链路起点"。同理 `/api/tables?onlyUnresolved` 的脏表集也要并上这份名单。
+- `parseError` 只出现在 `/api/edge/column` 与 `/api/table/{t}/columns` 的 `sources` 里：它来自快照的 `Snapshot.isParseError(jobId)`（`CorpusScanner` 扫描期把 `lineage.isParseError()` 的语句标识收成一个 `Set<String>` 存进快照），图 JSON 里没有——裁剪层不关心可信度，展示层才关心。为这个字段专门扩了 `LineageStore.replace(...)` 的第 5 个参数。
+- `/api/parse` 回的是**未折叠**的 `TableLineage`，其 `ColumnRef` 只有 `qualifier/column/boundTable/rawText/resolved`：`nodeId()` 不是 getter，Jackson 不下发，所以前端试解析面板按同一口径自己拼 `boundTable||qualifier` + `.` + `column`。
+
 ### 7.4 M3 验收实测（2026-09-21）
 
 - `mvn -o clean test` **245 绿**（M2 结束时 228；本轮 +16 Web 单测：`GraphAssemblerTest` 12 + `CorpusScannerTest` 4，+1 `LineageStoreTest` 的 SQL 索引用例）。**离线仓库没有 `spring-boot-test`/`spring-test` 任何版本**，所以 `@SpringBootTest` 这条路走不通：Web 层的验证口径 = 纯单测（裁剪/扫描器契约）+ 真起服务 curl 全端点。
 - `mvn -o package -DskipTests` → `java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar` 起在 8080，repackage 正常（21MB 可执行 jar）。
 - `sql/` 语料实测 `/api/overview`：16 文件 / 26 语句 / 17 表 / 13 张有字段 / 2329 字段边 / 6 表边 / maxLayer 1 / 0 UNRESOLVED / 0 STAR / 3 parseError（就是 §2.0 里那三段建表 DDL）——与 M2 基线逐项一致，说明引入服务层没有动到血缘。
 - 边证据实测 `kafka_user_app_data.eventbodylist → user_app_data.app_name`：`jobId=ck/user_app_data_ck_dml.sql#1`、`hops` 里带着折掉的 `[...sql#1]#unnest1.app_name`、`sqlText` 回显原文；扫描日志 0 条"没有产出边可折"告警。
-- `GET /` 目前 404（M4 才放 `static/index.html`）。
+- `GET /` 当时 404（M4 才放 `static/index.html`），M4 已闭合，见 §8.4。
 
-## 8. 前端层
+## 8. 前端层（M4 已按此落地）
 
 ### 8.1 目录与资产
 
 ```
 src/main/resources/static/
-  index.html
-  css/app.css
-  js/main.js  api.js  graphTable.js  graphColumn.js  detailPanel.js  badges.js   （ES module，无打包）
-  vendor/cytoscape.min.js        3.32.x（~450KB）
-  vendor/cytoscape-dagre.js      2.5.x
-  vendor/dagre.min.js            0.8.5
+  index.html                     三栏骨架 + 顶栏统计/工具 + 图头（标题/告警位/方向下拉）
+  css/app.css                    单文件；CSS 变量 + derivation 徽标配色 + mark 高亮色
+  js/api.js         9 端点封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）
+  js/badges.js      derivation 中文提示、层级配色、置信度分档
+  js/graph.js       挂载与样式表、dagre 布局 + breadthfirst 降级、节点尺寸、NODE_CAP
+  js/graphTable.js  表级 DAG（LR）
+  js/graphColumn.js 字段链路图（TB，derivation → 线型/颜色，中间关系灰底虚线）
+  js/detailPanel.js 右栏：表详情 / 字段来源 / 边证据 / 试解析结果
+  js/main.js        选区状态机 + 全部事件绑定 + URL hash + 导出
+  vendor/cytoscape.min.js 3.32.1(431508B)  dagre.min.js 0.8.5(283803B)
+          cytoscape-dagre.js 2.5.0(12665B) + 3 个 LICENSE + README.md（版本、sha256、加载顺序）
 ```
 
-获取方式（npm registry 已确认可达，`npm view cytoscape version` → 3.34.3）：
-`npm pack cytoscape@3.32.1 dagre@0.8.5 cytoscape-dagre@2.5.0` → 解包取 `dist/*.min.js` 拷进 `static/vendor/`，并在 `vendor/README.md` 记录版本与来源，便于审计。**不使用 CDN**（离线演示与内网部署要求）。若 dagre 拿不到，退化为 cytoscape 内置 `breadthfirst` + 后端下发的 `ranks` 做手工定位（图构建层已算好 rank，这是天然兜底）。
+获取方式照原计划：`npm pack` 取 `dist/*.min.js` 拷进 `vendor/`，README 记版本与 sha256 便于审计；**无 CDN、无 webjars、无打包器、无 TS、无框架**，`<script type="module" src="/js/main.js">` 直接跑。
+
+`vendor/README.md` 里写死的加载顺序是硬约束：dagre → cytoscape → cytoscape-dagre。UMD 包自己会 `register(cytoscape)` 注册 `dagre` 布局，**不要再手写** `cytoscape('register','layout','dagre',…)`（那是错误 API 用法）；`graph.js#runLayout` 用 try/catch 兜底，布局注册失败就降级 `breadthfirst`，图不会消失。
 
 ### 8.2 三栏交互
 
-- **左栏**：表搜索框 + 层级过滤（ODS/DWD/DWS/ADS/其他，按前缀识别）+ 质量开关（只看有解析错误、只看未解析字段）。列表项显示 `↑n ↓m` 度数和列级覆盖度。
-- **中栏**：图，两个 tab 共享选区。
-  - *表级 DAG*：LR 分层布局，节点色块 = 层级，边色 = `process_type`，点表节点出上下文菜单"看字段血缘 / 只看下游 / 展开整表字段"。
-  - *字段链路*：以选中表的字段为泳道（swimlane）纵向排布，节点 `table.column`，CTE/子查询字段画成 `derived` 虚线框；星号边 `*` 徽标且不可再展开（明确提示"v1 未做星号展开"）。
-  - 性能：默认 `depth=2`、节点上限 300，超限提示"请用根节点裁剪"，字段模式按需展开（点击才请求下一跳），不做全量渲染。
-- **右栏（详情，回答"字段来源"的核心）**：选中字段边时显示
-  1. 目标 `dws_x.emp_cnt` ← 来源列表（多来源全部列出）
-  2. 逐跳链路 `dwd_a.amount →(SUM, agg) cte_sum.cnt →(IDENTITY) dws_x.emp_cnt`
-  3. `derivation` / `confidence` / `jobId` / SELECT 第几位
-  4. 原始 SQL 片段，把来源列和目标列各画一条高亮框
-  5. 质量提示：parseError 时红条"此边来自语法错误恢复的部分结果，不可信"
-- 无框架、无 TS、无构建：`<script type="module" src="/js/main.js">`。
+- **左栏**三个 tab：表 / 质量 / 试解析。
+  - 表：搜索框 250ms 防抖 + 层过滤 `<select>`（选项按 `/api/overview.maxLayer` 生成——**图的 rank 是唯一可信的分层来源，不按 ODS/DWD 前缀猜**，前缀识别留在 §13 范围外）+ "只看有质量问题"（对应 `onlyUnresolved`）+ 列表项 `层 n · ↑u ↓d · c 字段`。
+  - 质量：5 组"计数 + 明细"（parseError SQL / UNRESOLVED 边 / STAR 边 / 没出血缘的文件 / 孤岛表），空组绿底，首次打开才发请求。
+  - 试解析：textarea → `POST /api/parse` → 逐语句卡片（输入表、插入模式、CTE/WINDOW/TEMPORAL 标记、未折叠字段边 + derivation 徽标、原文）。只读，不动快照。
+- **中栏**两个 tab 共享同一份选区 `state.{view,table,column}`。
+  - 表级 DAG：dagre LR，节点底色 = rank 层色；点表节点 = 以它为中心重裁（root + direction + depth）并让右栏出字段清单；点边出"来源表/目标表/jobId"；点空白清选区回全量。
+  - 字段链路：dagre TB，节点是 `table.column`，被折掉的中间关系（CTE/子查询/展开）画成灰底虚线框，边按 derivation 上色上型（UNRESOLVED 红虚线、STAR 橙点线、AGGREGATE 加粗金…），hover 出 derivation 标签，当前定位列打 `hot`。
+  - 性能闸门 `NODE_CAP=300`：超限**直接不画**，只回告警 + 保留右栏（语料里 783/787 列的表整表展开是 1568 节点，画出来必卡）。右栏字段清单另外截到 80 行。
+- **与原计划的三处实现期取舍**，记下来免得被当成漏做：
+  1. 不做右键上下文菜单。"看字段血缘 / 只看下游 / 展开整表字段" 改成「点节点即重裁」+ 右栏「铺开整表字段链路」按钮 + 图头方向下拉——少一层瞬时交互状态，能力一条没少。
+  2. 字段链路不做 swimlane 泳道。自算 y 坐标的收益抵不过成本，改 dagre TB + 层色，纵向排布照样看得清链路。
+  3. 边不按 `process_type` 上色，按 `derivation` 上色。字段级面板要回答的是"这条边多可信"，`process_type` 在表级边的证据里给。
+- 无框架、无构建，全部 ES module 相对导入。
 
-### 8.3 可访问性与导出
+### 8.3 证据块、导出与定位
 
-PNG 导出（`cytoscape.toBlob`）、子图 JSON 导出、URL hash 携带 `root/table/column` 便于分享定位。
+一条边的证据块从上到下（对应原计划右栏 5 条）：
+
+1. `to ← from` + derivation 徽标（STAR/UNRESOLVED 带 tooltip 说明 v1 约定）；
+2. parseError 红条（有才出）："此边来自语法错误恢复的部分结果，不可信"；
+3. hops 逐跳链（**>2 跳才画**，只有两端时没有信息量）；
+4. `加工方式 / 置信度 / 表达式 / 引擎 / 语句 jobId / SELECT 第几位`；
+5. SQL 原文 + 来源、目标列高亮。
+
+- 高亮实现：拿 `from`/`to` 的**末段列名**在原文里正则匹配（`escapeRegExp` + `\b`），目标 `mark.target` 蓝底、来源黄底；来源列与目标列同名时不区分两处出现（v1 不做词法定位）。全程 `createElement`/`createTextNode` 拼 DOM，**绝不用 innerHTML 塞 SQL**——语料文本是不可信输入。
+- 导出：PNG 用 `cy.png({full:true,scale:2,bg:'#ffffff'})` + `<a download>`（原计划写的 `toBlob` 不是 cytoscape 的 API）；子图 JSON 把 `{view,table,column,graph}` 打成 Blob 下载，`graph` 就是最近一次服务端下发的子图原文，可离线复核。
+- URL hash：`#view=table|column&table=<id>&column=<table.column>`，用 `history.replaceState` 同步（不推历史栈），外部改 hash 走 `hashchange` 恢复选区，链接可直接分享定位。
+
+### 8.4 M4 验收实测（2026-09-21）
+
+- `mvn -o clean test` 首轮 **245 绿**（M4 主体没动 Java 逻辑；M3 收尾时补进去的 `parseErrorJobs` 插管走的是既有 `LineageStoreTest` 用例）。边界补验后又改了 3 个 Java 文件，末轮 **246 绿**，见下。
+- `mvn -o package -DskipTests` → jar 内 `BOOT-INF/classes/static/**` 齐 21 个文件；`GET /` 200（3122B），`/js/*`、`/css/*`、`/vendor/*` 全 200。
+- 真浏览器（browser-use 驱动的 CDP 页面）实测，console 除 cytoscape 的 wheelSensitivity 提示外**零 error**，逐项：
+  - 顶栏 8 组统计 = 16 文件/26 语句/17 表（13 有字段）/2329 字段边/6 表边/maxLayer 1/错 3·未解析 0·星号 0；全量 DAG 标题 `17 表 / 6 边`；左栏 17 行、图例 2 层色块。
+  - 过滤链路：搜 `g05` → 8 张表，清空 → 17 张；层=1 → 4 张；`只看有质量问题` → 0 张（本语料 0 UNRESOLVED/0 STAR，与账本自洽）。
+  - 点表节点 → 图重裁、hash 写 `#view=table&table=user_app_data`、左栏行高亮、右栏 27 行字段清单（每行 `↑n 来源 · ↓m 去向`）。
+  - 点字段行 → 进字段链路视图并**留在该字段**：BOTH depth 2 展开 10 节点 / 9 边，`user_app_data.app_name` 打 `hot`，边类名 `EXPRESSION`。
+  - 边证据：`kafka_user_app_data.eventbodylist → user_app_data.app_name`，hops 三段（含折掉的 `[ck/user_app_data_ck_dml.sql#1]#unnest1.app_name`）、`85%（EXPRESSION）`、`FLINK`、`SELECT 第 1 位`、942 字符原文里 3 处 `<mark>`。
+  - 点字段边 → `/api/edge/column` 面板 `命中 1 条边`；点表级边 → `jobId=ck/g05_ck_dml.sql#1`。
+  - 边界：整表展开 `g05_new_ck_kafka_enterprise_tel_ul_tx` → 服务端 1568 节点 → 前端拒画并提示"超过 300 上限"（635 列表同 644 节点）；连续 tap 全部 17 个节点无异常、选区自洽。
+  - parseError 红条：语料那 3 段 DDL 不产出字段边（全 17 张表 `parseError:true` 计数均 0），于是在 git-ignored 临时目录放一条语法残缺但可错误恢复的 `INSERT ... WHERE (a > 1`，`POST /api/scan` 换快照后边面板顶部出红条，再点`重扫目录`换回 `sql/`（统计回到 16/26/2329）——临时目录已删，涉密语料规则未破。
+  - 试解析：`WITH s AS (…) SELECT SUM(s.amount)…` → 4 条未折叠边（`dwd.pay.amount → s.amount`、`s.amount → dws.sum_cnt.emp_cnt [AGGREGATE]`），输入表只有 `dwd.pay`（CTE 名没漏成表）。
+  - 传不存在的列（`column=nope`）→ 图保持上一帧不白屏，告警位与右栏出 `表 kafka_table 没有字段 nope`。
+- 浏览器验证揪出并修掉的 7 个前端缺陷（都是纸面看不出来的）：字段清单点进去不切视图；`column` 参数误传整条 `table.column` 标识（服务端要裸列名）；cytoscape 边数据只有 `source/target`，拿 `data.from` 拼请求 → 缺参 400；`hashchange` 没 await 导致失败被吞成 unhandled rejection；超限标题谎报"0 边"；`ordinal` 是 0 起下标却按"真值才显示"渲染成"少一位"（`0` 直接消失）；`/api/parse` 的 `sources` 里没有 `nodeId`（不是 getter，Jackson 不下发），面板一度显示 `undefined`。
+- 星号/未解析两条边界用 §14.5 的方式补验（临时目录 `D:/tmp-m4star`，在仓库外所以不可能被 `git add`，验完即删），**又揪出两个真缺陷**：
+  - STAR 侧没问题——`dwd.star.*` 的徽标 `STAR · 星号未展开`、`30%（STAR）`、原文高亮、`语句 star_unresolved.sql#1` 全出，图例也有星号色。
+  - UNRESOLVED 侧是**语义谎言**：来源没绑上的边根本进不了图（`ColumnGraphBuilder` 造不出指向 null 的端点），于是字段面板说"没有解析到来源：这是链路起点（源表字段）"，而 `dwd.amb` 明明是 INSERT 目标；`/api/tables?onlyUnresolved=true` 也漏掉它（脏表集合是从图边推的，边已经被丢了）。修法：`ScanReport` 另存 `unresolvedTargets`（目标列标识），读侧据此①把表并进脏表集，②给字段清单下发 `unresolvedSource`，面板改出红条"它是解析缺口，不是链路起点"，字段行挂 `UNRESOLVED` 徽标。顺带把 `/api/issues` 明细里漏出来的 `ColumnRef(...)` Lombok toString 换成裸列名。
+  - 复验：临时语料下 `onlyUnresolved` 从 2 张变 3 张（补回 `dwd.amb`），issues 明细变成 `dwd.amb.amount[UNRESOLVED] <- [amount]`，浏览器里红条与徽标都渲染出来；换回 `sql/` 后统计仍是 16/26/3/0/0/17/13/0/2329/6/maxLayer 1，`onlyUnresolved` 空——本语料 0 未解析，与账本自洽。新增 `LineageStoreTest.unresolvedTargetsStayInTheLedgerAfterTheGraphDropsTheirEdges`，`mvn -o clean test` **246 绿**。
+- **仍未验到的**：in-app Browser 没给可见 surface（viewport 0x0），所以像素级观感（节点是否重叠、配色对比度、PNG 成品长什么样）只有模型层断言撑着（dagre 确实跑了：17 节点 x 跨 2029、y 跨 122）。人眼过一遍仍是 §14 的待办。
 
 ## 9. 里程碑与工作量
 
@@ -492,7 +538,7 @@ PNG 导出（`cytoscape.toBlob`）、子图 JSON 导出、URL hash 携带 `root/
 | **M1 列级解析核心** | ✅ 已完成：`ColumnRef/ColumnEdge` + `QueryScope` 栈 + 三方言共用一份 `ColumnLineageEngine` | 207 测试全绿；语料 2376 条列边，幽灵列/UNRESOLVED/STAR 均 0 | 2d |
 | **M2 归一化/图模型** | ✅ 已完成：`ColumnGraphBuilder` 折叠 + `ColumnEdge.targetInternal` 标记、`LocalRelation` 语句命名空间、`LayeredDagBuilder`（迭代 Tarjan+Kahn）、`LineageStore` 快照 | 228 测试全绿（新增 21）：环/自依赖、20000 节点长链、多 CTE 同名、别名解引用、hop 证据；全语料建图 17 节点/2329 列边/0 未折叠伪节点/0 缺层号 | 1d |
 | **M3 服务层** | ✅ 已完成：starter-web 2.7.18 + `CorpusScanner`（jobId=文件#序号）+ `ScanReport` 账本 + 9 个端点 + `ApiResponse`/`ApiErrorAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1）。实测细节见 §7.4 | 245 测试全绿（新增 17）；真起 jar 逐端点 `curl` 通过，overview 与 M2 基线逐项一致；0 条折叠告警；无 slf4j 双绑定 | 1d |
-| **M4 前端** | vendor 资产 + 三栏 + 两种图 + 详情证据 | **必须真浏览器点开验证**（走 browser-use），表级/字段级各跑一遍金路径 + 星号/未解析边界 | 2d |
+| **M4 前端** | ✅ 已完成：vendor 三件套（cytoscape 3.32.1 + dagre 0.8.5 + cytoscape-dagre 2.5.0）+ 三栏 ES module（`main/api/graphTable/graphColumn/detailPanel/badges`）+ 表级 DAG 与字段链路两种图 + 右栏逐跳证据（hops/derivation/confidence/SQL 高亮/parseError 红条）+ PNG 与子图 JSON 导出 + hash 定位。实测细节见 §8.4 | `mvn -o clean test` **246 绿**；jar 内 static 21 文件、`GET /` 200；真浏览器（browser-use）表级/字段级金路径 + 300 节点超限 + 缺列 400 + parseError 红条 + 星号/未解析边界逐项通过，console 零 error；揪出 7 个前端缺陷与 1 处"把解析缺口说成链路起点"的语义谎言 | 2d |
 | **M5 语料回归** | 用忽略的临时目录跑涉密语料列级质量巡检（只本地，不落仓库），修问题 | 泄漏巡检 0；列级"编造列"0 | 1d |
 | **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理。剩余：`column_lineage` DDL 升级脚本（随 §10 持久化阶段出）、`superior-sql-parser-temp/` 待你确认删除 | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线 | 0d |
 
@@ -571,10 +617,10 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-1. **基线（本分支当前已满足）**：`mvn -o clean test` 245/245（M3 后）、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这三条不被破坏。
-2. `mvn spring-boot:run` 后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。
-3. 点击任一有列级信息的表 → 字段链路图渲染出至少一条 2 跳以上链路（CTE/子查询中间节点可见）。
-4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致。
-5. `SELECT *` 边显示为 `STAR` 徽标且提示未展开；`UNRESOLVED` 边在 `/api/issues` 与 UI 中双向可见。
-6. 涉密语料巡检：列级 6 条 oracle 泄漏计数为 0，`tmpdb/` 已删除。
-7. 本方案入库为 `outputs/` 下唯一现行设计文档；两份旧 Calcite 路线文档已删除，作废理由保留在 §0。
+- [x] 1. **基线（M4 后）**：`mvn -o clean test` **246/246**、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这三条不被破坏。
+- [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。**像素级观感仍待人眼过一遍**（验证用的 in-app Browser 是 0x0 视口，只能读结构与文本）。
+- [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
+- [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。
+- [x] 5. `SELECT *` 边显示 `STAR · 星号未展开` 徽标 + 图例色块 + 30% 置信度；`UNRESOLVED` 边在 `/api/issues`、左栏质量过滤、字段清单徽标与右栏红条四处都可见——第 3、4 处是本轮补验时才修出来的，见 §8.4。
+- [ ] 6. 涉密语料巡检（M5）：列级 6 条 oracle 泄漏计数为 0，`tmpdb/` 已删除。
+- [x] 7. 本方案入库为 `outputs/` 下唯一现行设计文档；两份旧 Calcite 路线文档已删除，作废理由保留在 §0。

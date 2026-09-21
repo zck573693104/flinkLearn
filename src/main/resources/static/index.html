@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQL 字段级血缘</title>
+<link rel="stylesheet" href="/css/app.css">
+<script src="/vendor/dagre.min.js"></script>
+<script src="/vendor/cytoscape.min.js"></script>
+<script src="/vendor/cytoscape-dagre.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>SQL 血缘</h1>
+  <dl id="overview" class="stats"></dl>
+  <div class="tools">
+    <label class="field">深度
+      <input id="depth" type="number" min="1" max="8" value="2">
+    </label>
+    <button id="rescan" type="button">重扫目录</button>
+    <button id="export-png" type="button">导出 PNG</button>
+    <button id="export-json" type="button">导出 JSON</button>
+  </div>
+</header>
+
+<main class="grid">
+  <aside class="col left">
+    <nav class="tabs" id="left-tabs" aria-label="左栏视图">
+      <button type="button" data-tab="tables" class="active">表</button>
+      <button type="button" data-tab="issues">质量</button>
+      <button type="button" data-tab="parse">试解析</button>
+    </nav>
+
+    <section id="panel-tables" class="panel">
+      <input id="search" type="search" placeholder="搜索表名（子串，大小写不敏感）" autocomplete="off">
+      <div class="filters">
+        <label class="field">层
+          <select id="layer-filter"><option value="">全部</option></select>
+        </label>
+        <label class="check"><input id="only-unresolved" type="checkbox">只看有质量问题</label>
+      </div>
+      <ul id="table-list" class="list"></ul>
+      <p id="table-note" class="note"></p>
+    </section>
+
+    <section id="panel-issues" class="panel hidden">
+      <ul id="issues" class="issues"></ul>
+    </section>
+
+    <section id="panel-parse" class="panel hidden">
+      <textarea id="parse-sql" rows="8" placeholder="粘贴一条 INSERT / CREATE TABLE AS SELECT"></textarea>
+      <button id="parse-run" type="button">解析看结果</button>
+      <div id="parse-out" class="parse-out"></div>
+    </section>
+  </aside>
+
+  <section class="col center">
+    <nav class="tabs" id="view-tabs" aria-label="图视图">
+      <button type="button" data-view="table" class="active">表级 DAG</button>
+      <button type="button" data-view="column">字段链路</button>
+    </nav>
+    <div class="graph-head">
+      <span id="graph-title" class="graph-title">全量血缘（未选表）</span>
+      <span id="graph-warn" class="warn" role="status"></span>
+      <label class="field">方向
+        <select id="direction">
+          <option value="both">双向</option>
+          <option value="up">只看来源</option>
+          <option value="down">只看下游</option>
+        </select>
+      </label>
+    </div>
+    <div id="graph"></div>
+    <div id="legend" class="legend"></div>
+  </section>
+
+  <aside class="col right">
+    <div id="detail" class="detail">
+      <p class="empty">点图中的表节点看字段清单，点字段边看逐跳来源证据。</p>
+    </div>
+  </aside>
+</main>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>
