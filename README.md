@@ -41,8 +41,10 @@ MAVEN_OPTS=-Dfile.encoding=UTF-8 mvn -o compile \
 
 ## 起 WebUI
 
+**不需要任何数据库、消息队列或 npm 构建步骤**：血缘结果只存在进程内的不可变快照里，启动时扫一遍 SQL 目录（`POST /api/scan` 可随时换快照）。机器上没有 MySQL 也能跑完全部功能。
+
 ```bash
-mvn -o package -DskipTests
+mvn -o clean package             # 252 用例 + 可执行 jar
 java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar                # 默认扫描 ./sql
 java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar --lineage.scan-dir=D:\dw\sql
 ```
@@ -71,7 +73,7 @@ src/main/java/com/bigdata/lineage/
   tools/SqlDirLineageTool.java                     目录批量解析 CLI
 src/main/resources/static/                         前端：无框架、无打包，ES module 直出
 src/test/java/com/bigdata/lineage/                 表级/字段级/切分/Web 四层回归
-sql/                                               离线数仓语料 + 建表脚本
+sql/                                               离线数仓语料（15 个文件，0 解析错误）
 outputs/                                           方案与总结文档
 ```
 
@@ -85,8 +87,8 @@ outputs/                                           方案与总结文档
 
 ## 下一步
 
-字段级血缘 + WebUI（M0 语法缺口 → M5 真实语料巡检）已落地，设计、口径与逐里程碑实测见
-[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。剩下的只有 M6 尾巴：`column_lineage` 落库 DDL（预案见方案 §10，随持久化阶段一起做）。
+字段级血缘 + WebUI（M0 语法缺口 → M6 残留收敛）已全部落地，设计、口径与逐里程碑实测见
+[outputs/字段级血缘与WebUI技术方案.md](outputs/字段级血缘与WebUI技术方案.md)。没有排期中的待办：**血缘结果不落库**（§10 已定稿，WebUI 不依赖任何数据库），要演进就靠新语料驱动——把 SQL 丢进 `sql/` 或 `run-lineage.bat <目录>`，语法缺口和未绑定列会自己冒出来（口径见方案 §11）。
 
 ## 历史
 

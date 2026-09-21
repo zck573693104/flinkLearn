@@ -5,7 +5,7 @@ spring:
   application:
     name: sql-lineage-web
 
-# 血缘语料扫描配置（WebUI 落地时由 CorpusScanner 读取；当前无 Web 层，暂为待接配置）
+# 血缘语料扫描配置：CorpusScanner 读这两个键，rescan-on-start=false 可单独起服务验证静态页
 lineage:
   scan-dir: sql
   rescan-on-start: true

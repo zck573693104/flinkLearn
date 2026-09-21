@@ -99,6 +99,22 @@ src/main/resources/{application.yml, log4j2.xml}
 
 **流程教训**：删任何东西前先 `grep` 仓库文档对该路径的说明——这条建议本仓库自己写了 23 行，我是删完才读到的。
 
+#### 2.0.5 与血缘无关的残留二次清理（2026-09-21 收尾）
+
+方向确认：**WebUI 不接任何数据库**，血缘结果只活在进程内的不可变快照里，语料从磁盘扫。那么"数据"侧的文件也就没有存在理由了。这一批删的都是**跟踪文件**，`git show <commit>^:<path>` 随时取回——和 §2.0.4 那个嵌套仓库不是一回事。
+
+| 删除 | 为什么与血缘无关 |
+|---|---|
+| `compile_output.log` | 9/19 的一次性编译日志，30KB，没人读 |
+| `fix_chinese.py` | 把 `src/main/java` 里中文批量换成英文的一次性脚本；替换表含 `设置`→`Set`、`获取`→`Get` 这种高频词，现在全套中文注释与告警文案喂给它会被毁掉，留着就是地雷 |
+| `setup-flink-parser.ps1` | 服务对象是已删的 `superior-sql-parser-temp/`（clone melin 上游、建 `flink-only-jdk17-dev`、删 11 个 superior 模块）。它顺带是那段 JDK 17 改造的唯一文字记录，git 历史里还在（`be3b22d`） |
+| `setup-utf8.ps1` | PowerShell 编码设置；README 已用 `MAVEN_OPTS=-Dfile.encoding=UTF-8` 与纯 ASCII 的 `run-lineage.bat` 覆盖这个需求 |
+| `sql/init_lineage_db.sql` | MySQL 建表脚本（`ENGINE=InnoDB`、`AUTO_INCREMENT`、Kafka→MySQL 示例数据）。既不是语料也不是本分支路线；而且**语料里那 3 条 parseError 全部出自它的三段 DDL**——我们只有 Flink/Spark/Presto 三套语法，MySQL 建表语句当然解析不过去 |
+
+删完不重启、直接 `POST /api/scan` 换快照（这一步本身就是"运行时扫盘、没有库"的证明）：`/api/overview` 从 16 文件 / 26 语句 / 3 parseError / 17 表 → **15 文件 / 22 语句 / 0 parseError / 14 表**；图列边 2327、表边 6、UNRESOLVED 0、STAR 0、环 0、maxLayer 1 **一项都没动**——删掉的文件本来就不产出血缘。`.gitignore` 补了 `*.log` 防编译日志再进仓库。
+
+**零数据库启动实测**：`mvn -o clean package` → 252 绿 + 21.7MB boot jar；启动前 `netstat` 确认 3306/5432 无监听（机器上根本没有数据库进程）；`java -jar` 直接起，`GET /`、三个静态资源、9 个端点全 200；真浏览器（browser-use）里表级 DAG 渲染 14 表 / 6 边，字段链路 `user_app_data.car_vin` 出 19 节点 / 18 边，右栏逐跳证据带 derivation 与置信度，console 零 error（只剩一条 cytoscape 自己关于 wheel sensitivity 的提示）。
+
 ### 2.1 Web 层：清理前的现状（下表部分行已被 2.0 的删除动作作废，保留作为决策依据）
 
 | 事实 | 证据 |
@@ -110,7 +126,7 @@ src/main/resources/{application.yml, log4j2.xml}
 | `application.yml` 是**死配置**（端口/数据源/mybatis 都无人读取） | `server.port: 8080`、`spring.datasource.url`、`mybatis.mapper-locations`（mybatis 不在 pom、无 mapper 目录） |
 | `TableLineageController` 是**普通类**，不是 REST 控制器 | `controller/TableLineageController.java:13` `public class TableLineageController {`；零命中 `@RestController\|@GetMapping\|@ExceptionHandler\|WebMvcConfigurer` |
 | `dao/` 是空目录；Service 是纯内存 Map | `service/TableLineageService.java:21` `private final Map<String, List<TableLineage>> lineageCache = new HashMap<>();` |
-| 现有 `sql/init_lineage_db.sql` 的 `column_lineage` 表**不足以支撑字段溯源** | `sql/init_lineage_db.sql:35-42` 只有 `id/lineage_id/source_column/target_column`，缺 source_table/target_table/job_id/derivation/confidence/engine/唯一键 |
+| 现有 `sql/init_lineage_db.sql` 的 `column_lineage` 表**不足以支撑字段溯源** | `sql/init_lineage_db.sql:35-42` 只有 `id/lineage_id/source_column/target_column`，缺 source_table/target_table/job_id/derivation/confidence/engine/唯一键（该文件已在 §2.0.5 删除，原文见 git 历史）|
 
 结论：需要新建 Web 骨架 + 新建持久化模型；旧 `controller`/`service`/`model` 三件套是"表级 + 手写 Map 返回"的半成品，本方案**不复用它**（避免再造一套并行的血缘存储），而是在其上建立新的只读查询层，旧三件套列为 M6 清理项。
 
@@ -121,7 +137,7 @@ src/main/resources/{application.yml, log4j2.xml}
   ⚠ 已知坑：`confidence = 0.95` 没有 `@Builder.Default`，任何 `builder()` 不显式 `.confidence()` 得到 0.0。列级模型必须避开这个 Lombok 陷阱。
 - 三方言 Visitor：`extractor/TableLineageExtractor.java`（Flink）、`SparkTableLineageExtractor.java`、`PrestoTableLineageExtractor.java`。三者结构对称，状态字段 `targetTable/sourceTables/cteNames/processType/insertMode/hasCte/...`，`addSourceTable` 用扁平 `cteNames` 过滤（Flink `:216`、Spark `:209`）。
 - Grammar 规模：Flink parser 436 行 / 62 规则，Spark 537 / 75，Presto 469 / 68。
-- 表级语料基线（不能破坏）：`run-lineage.bat sql` → 16 文件 / 17 输出表 / 3 WARN（MySQL 初始化脚本）；`mvn clean test` → 125/125。
+- 表级语料基线（不能破坏）：`run-lineage.bat sql` → 16 文件 / 17 输出表 / 3 WARN（MySQL 初始化脚本）；`mvn clean test` → 125/125。M5/M6 收尾后为 **15 文件 / 14 输出表 / 0 WARN**（那三段 MySQL DDL 已删，见 §2.0.5）、252 用例——当前有效基线以 §14 第 1 条为准。
 
 ### 2.3 做列级血缘要跨过的 6 个具体障碍（逐条已核实）
 
@@ -543,13 +559,15 @@ src/main/resources/static/
 | **M3 服务层** | ✅ 已完成：starter-web 2.7.18 + `CorpusScanner`（jobId=文件#序号）+ `ScanReport` 账本 + 9 个端点 + `ApiResponse`/`ApiErrorAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1）。实测细节见 §7.4 | 245 测试全绿（新增 17）；真起 jar 逐端点 `curl` 通过，overview 与 M2 基线逐项一致；0 条折叠告警；无 slf4j 双绑定 | 1d |
 | **M4 前端** | ✅ 已完成：vendor 三件套（cytoscape 3.32.1 + dagre 0.8.5 + cytoscape-dagre 2.5.0）+ 三栏 ES module（`main/api/graphTable/graphColumn/detailPanel/badges`）+ 表级 DAG 与字段链路两种图 + 右栏逐跳证据（hops/derivation/confidence/SQL 高亮/parseError 红条）+ PNG 与子图 JSON 导出 + hash 定位。实测细节见 §8.4 | `mvn -o clean test` **246 绿**；jar 内 static 21 文件、`GET /` 200；真浏览器（browser-use）表级/字段级金路径 + 300 节点超限 + 缺列 400 + parseError 红条 + 星号/未解析边界逐项通过，console 零 error；揪出 7 个前端缺陷与 1 处"把解析缺口说成链路起点"的语义谎言 | 2d |
 | **M5 语料回归** | ✅ 已完成：子查询身份（别名只做查找键，`#subN` 才是身份）+ 无参关键字函数与 lambda 形参不再当列（§6）。实测细节与逐条定性见 §11.1 | 涉密语料：折叠告警 62→**0**、未折叠伪节点 0、幽灵列 0、UNRESOLVED 7→**2**（两条都是 CASE ELSE 的未限定列，两张未知表 ⇒ 按"宁缺勿假"口径保留，`ambiguousUnqualifiedColumnIsNotForcedOntoATable` 已锁这个语义）；`sql/` 基线：2376 原始列边不变，图列边 2329→**2327**（4 处 `current_timestamp` 假来源），0 告警。`mvn -o clean test` **252 绿** | 1d |
-| **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理，`superior-sql-parser-temp/` 也按你确认删除（代价与教训记在 §2.0.4 末段）。剩余：`column_lineage` DDL 升级脚本（随 §10 持久化阶段出） | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线 | 0d |
+| **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4、§2.0.5）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理，`superior-sql-parser-temp/` 按你确认删除（代价与教训记在 §2.0.4 末段），与血缘无关的编译日志/一次性脚本/MySQL 建表脚本再删一批。**无遗留待办**：`column_lineage` DDL 随"不落库"结论一起取消（§10） | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线；`sql/` 语料 0 解析错误 | 0d |
 
 合计约 7.5 人日（§2.0 的结构与文档清理已完成，不计入）。M1 与 M3 可并行（解析层不依赖 Spring）。
 
-## 10. 持久化（明确延后，但先给正确 DDL）
+## 10. 持久化：确认不做（结论与 DDL 只留作参考）
 
-v1 是**内存快照 + 目录扫描**，启动即可用，无外部依赖，这符合"最小依赖"约束。若后续要落 MySQL，现有 `column_lineage`（`sql/init_lineage_db.sql:35-42`）必须升级为：
+2026-09-21 定稿：**血缘结果不落库**。WebUI 的数据来源就是启动时（或 `POST /api/scan` 时）对目录的一次扫描，进程内一份不可变快照，没有数据库、没有迁移脚本、没有外部中间件。好处不只是"少一个依赖"：改一处语法 → `mvn -o clean package` → 重扫目录就能看到图上变化，整个回路只有编译。
+
+仓库里的 `sql/init_lineage_db.sql`（`column_lineage` 等三张 MySQL 表）已随 §2.0.5 删除。下面这份 DDL 不再排期，只保留作"若真要落库时的正确形状"——原表缺的正是幂等与溯源所需的列：
 
 ```sql
 CREATE TABLE IF NOT EXISTS column_lineage (
@@ -637,7 +655,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 - 不做 `SELECT *` 列展开、不接 information_schema。
 - 不引 Calcite / Flink Planner / `RelMetadataQuery`（与既有约束一致）。
-- 不做 MySQL 持久化读写（§10 只给 DDL 预案）。
+- 不做 MySQL 持久化读写，也不挂数据库依赖（§10 已定稿为"不落库"，那份 DDL 只是形状参考）。
 - 不做权限/多租户/审计、不做血缘编辑与人工修正回写。
 - 不做前端框架（React/Vue）、不做 npm 构建步骤进入 Maven。
 - 不动三套 grammar 的表级规则（已稳定），除 §5 三处。
@@ -646,7 +664,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-- [x] 1. **基线（M5 后）**：`mvn -o clean test` **252/252**、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN（那 3 条是语料里故意残缺的 DDL）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
+- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **252/252** + boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
 - [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。**像素级观感仍待人眼过一遍**（验证用的 in-app Browser 是 0x0 视口，只能读结构与文本）。
 - [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
 - [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。

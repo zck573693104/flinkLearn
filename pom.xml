@@ -34,6 +34,8 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <version>${lombok.version}</version>
+            <!-- 只在编译期展开 @Data/@Builder/@Slf4j，运行时不需要，别打进 boot jar -->
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
@@ -163,6 +165,13 @@
                 <version>${spring-boot.version}</version>
                 <configuration>
                     <mainClass>com.bigdata.lineage.web.LineageWebApplication</mainClass>
+                    <excludes>
+                        <!-- repackage 默认把 provided 依赖也装进 BOOT-INF/lib，lombok 运行时用不到 -->
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
                 </configuration>
                 <executions>
                     <execution>
