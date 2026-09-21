@@ -100,7 +100,7 @@ final class ColumnLineageEngine {
         if (insert == null) {
             return;
         }
-        QueryScope outer = new QueryScope(null, null);
+        QueryScope outer = new QueryScope(null);
         ParserRuleContext with = childRule(ctx, "withClause");
         if (with != null) {
             registerCtes(with, outer);
@@ -145,7 +145,7 @@ final class ColumnLineageEngine {
             return;
         }
         String target = tableName(tablePath);
-        QueryScope scope = new QueryScope(null, target);
+        QueryScope scope = new QueryScope(null);
         scope.register(Relation.physicalTable(target), uidOf(childRule(ctx, "alias")));
 
         List<ParserRuleContext> items = childRules(assignments, "assignment");
@@ -170,7 +170,7 @@ final class ColumnLineageEngine {
      */
     private List<String> processQuery(ParserRuleContext qe, QueryScope parent,
                                       String target, List<String> positional) {
-        QueryScope cteScope = new QueryScope(parent, target);
+        QueryScope cteScope = new QueryScope(parent);
         ParserRuleContext with = childRule(qe, "withClause");
         if (with != null) {
             registerCtes(with, cteScope);
@@ -183,7 +183,7 @@ final class ColumnLineageEngine {
         }
 
         for (ParserRuleContext part : childRules(qe, "queryExpression")) {
-            QueryScope partScope = new QueryScope(cteScope, target);
+            QueryScope partScope = new QueryScope(cteScope);
             ParserRuleContext partWith = childRule(part, "withClause");
             if (partWith != null) {
                 registerCtes(partWith, partScope);
@@ -198,7 +198,7 @@ final class ColumnLineageEngine {
 
     private List<String> processBranch(ParserRuleContext branch, QueryScope parent,
                                        String target, List<String> positional) {
-        QueryScope scope = new QueryScope(parent, target);
+        QueryScope scope = new QueryScope(parent);
         ParserRuleContext from = childRule(branch, "fromClause");
         if (from != null) {
             registerFrom(from, scope);

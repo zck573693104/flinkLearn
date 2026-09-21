@@ -15,18 +15,12 @@ public final class QueryScope {
 
     private final QueryScope parent;
 
-    /** 本作用域 SELECT 结果的去处：物理表全名、CTE 名或子查询伪节点名 */
-    private final String target;
-
     private final Map<String, Relation> byKey = new LinkedHashMap<>();
 
     private final List<Relation> relations = new ArrayList<>();
 
-    private final List<String> outputColumns = new ArrayList<>();
-
-    public QueryScope(QueryScope parent, String target) {
+    public QueryScope(QueryScope parent) {
         this.parent = parent;
-        this.target = target;
     }
 
     /**
@@ -112,20 +106,7 @@ public final class QueryScope {
         return false;
     }
 
-    public String getTarget() {
-        return target;
-    }
-
-    public QueryScope getParent() {
-        return parent;
-    }
-
     public List<Relation> getRelations() {
         return relations;
-    }
-
-    /** 本作用域 SELECT 的输出列名，按位置排列，供外层把它当关系来解析 */
-    public List<String> getOutputColumns() {
-        return outputColumns;
     }
 }
