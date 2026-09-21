@@ -1,12 +1,14 @@
 package com.bigdata.lineage.parser;
 
 import com.bigdata.lineage.parser.extractor.*;
+import com.bigdata.lineage.parser.model.ColumnEdge;
 import com.bigdata.lineage.parser.model.TableLineage;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -26,6 +28,9 @@ public class MultiEngineSQLLineageParser {
     private final TableLineageExtractor flinkExtractor;
     private final SparkTableLineageExtractor sparkExtractor;
     private final PrestoTableLineageExtractor prestoExtractor;
+    private final ColumnSource flinkColumns;
+    private final ColumnSource sparkColumns;
+    private final ColumnSource prestoColumns;
     private final boolean enableCache;
     private final SqlCache cache;
     
@@ -37,6 +42,9 @@ public class MultiEngineSQLLineageParser {
         this.flinkExtractor = new TableLineageExtractor();
         this.sparkExtractor = new SparkTableLineageExtractor();
         this.prestoExtractor = new PrestoTableLineageExtractor();
+        this.flinkColumns = new ColumnSource("FLINK", new FlinkColumnLineageExtractor()::extractFromSql);
+        this.sparkColumns = new ColumnSource("SPARK", new SparkColumnLineageExtractor()::extractFromSql);
+        this.prestoColumns = new ColumnSource("PRESTO", new PrestoColumnLineageExtractor()::extractFromSql);
         this.enableCache = enableCache;
         this.cache = new SqlCache();
     }
@@ -110,27 +118,29 @@ public class MultiEngineSQLLineageParser {
         TableLineage flinkResult = tryExtractFlink(sql);
         if (isCleanLineage(flinkResult)) {
             log.debug("识别为 Flink SQL");
-            return flinkResult;
+            return attachColumnLineage(flinkResult, flinkColumns, sql);
         }
         
         TableLineage sparkResult = tryExtractSpark(sql);
         if (isCleanLineage(sparkResult)) {
             log.debug("识别为 Spark SQL");
-            return sparkResult;
+            return attachColumnLineage(sparkResult, sparkColumns, sql);
         }
         
         TableLineage prestoResult = tryExtractPresto(sql);
         if (isCleanLineage(prestoResult)) {
             log.debug("识别为 Presto SQL");
-            return prestoResult;
+            return attachColumnLineage(prestoResult, prestoColumns, sql);
         }
         
         // 无引擎能完整解析：回退到第一个带血缘的部分结果
-        for (TableLineage result : new TableLineage[]{flinkResult, sparkResult, prestoResult}) {
+        for (Object[] candidate : new Object[][]{
+                {flinkResult, flinkColumns}, {sparkResult, sparkColumns}, {prestoResult, prestoColumns}}) {
+            TableLineage result = (TableLineage) candidate[0];
             if (result != null && result.hasLineage()) {
                 log.warn("SQL 存在语法错误，血缘为部分解析结果（可能缺表/错表）: {}",
                         sql.substring(0, Math.min(100, sql.length())));
-                return result;
+                return attachColumnLineage(result, (ColumnSource) candidate[1], sql);
             }
         }
         
@@ -140,6 +150,34 @@ public class MultiEngineSQLLineageParser {
         
         log.warn("无法识别 SQL 引擎或解析失败：{}", sql);
         return null;
+    }
+    
+    /**
+     * 采纳的方言再跑一遍列级提取。字段级失败只降级不升级：表级结果照常返回，
+     * 让 UI 顶多少一层字段，而不是整条血缘消失。
+     */
+    private TableLineage attachColumnLineage(TableLineage lineage, ColumnSource source, String sql) {
+        try {
+            List<ColumnEdge> edges = source.extractor.apply(sql);
+            for (ColumnEdge edge : edges) {
+                edge.setEngine(source.engine);
+            }
+            lineage.setColumnEdges(edges);
+        } catch (Exception e) {
+            log.warn("字段级血缘提取失败，仅保留表级结果：{}", e.getMessage());
+        }
+        return lineage;
+    }
+    
+    /** 方言到列级提取的绑定，回退循环里要连着引擎名一起带走 */
+    private static final class ColumnSource {
+        private final String engine;
+        private final Function<String, List<ColumnEdge>> extractor;
+        
+        ColumnSource(String engine, Function<String, List<ColumnEdge>> extractor) {
+            this.engine = engine;
+            this.extractor = extractor;
+        }
     }
     
     /**

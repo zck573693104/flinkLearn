@@ -2,6 +2,7 @@ package com.bigdata.lineage.parser.model;
 
 import lombok.Builder;
 import lombok.Data;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -34,22 +35,32 @@ public class TableLineage {
     /**
      * 解析置信度 (0.0 - 1.0)
      */
+    @Builder.Default
     private double confidence = 0.95;
     
     /**
      * 是否包含 CTE (WITH 子句)
      */
+    @Builder.Default
     private boolean hasCte = false;
     
     /**
      * 是否包含时间旅行 JOIN (FOR SYSTEM_TIME AS OF)
      */
+    @Builder.Default
     private boolean hasTemporalJoin = false;
     
     /**
      * 是否包含窗口函数 (TUMBLE, HOP, CUMULATE 等)
      */
+    @Builder.Default
     private boolean hasWindowFunc = false;
+
+    /**
+     * 字段级血缘边；未跑列级提取时为空列表
+     */
+    @Builder.Default
+    private List<ColumnEdge> columnEdges = new java.util.ArrayList<>();
     
     /**
      * 解析过程是否存在语法错误（true 表示 ANTLR 错误恢复的部分结果，血缘可能缺表/错表）

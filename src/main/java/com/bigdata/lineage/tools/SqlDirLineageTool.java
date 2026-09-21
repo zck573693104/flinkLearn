@@ -1,6 +1,9 @@
 package com.bigdata.lineage.tools;
 
 import com.bigdata.lineage.parser.MultiEngineSQLLineageParser;
+import com.bigdata.lineage.parser.model.ColumnDerivation;
+import com.bigdata.lineage.parser.model.ColumnEdge;
+import com.bigdata.lineage.parser.model.ColumnRef;
 import com.bigdata.lineage.parser.model.TableLineage;
 
 import java.io.IOException;
@@ -18,13 +21,23 @@ import java.util.stream.Stream;
 /**
  * SQL 目录批量血缘扫描工具
  *
- * 用法：java ... SqlDirLineageTool [sql目录，默认 ./sql]
+ * 用法：java ... SqlDirLineageTool [sql目录，默认 ./sql] [--columns]
  * 递归读取目录下所有 .sql 文件，解析每条语句的输入表/输出表，最后汇总去重。
+ * --columns 额外打印字段级血缘；无论是否开启，汇总里都会给出列级质量体检
+ * （未绑定来源的边、星号边、以及"列名不在原句里"的作用域泄漏嫌疑）。
  */
 public class SqlDirLineageTool {
 
     public static void main(String[] args) throws IOException {
-        Path dir = Paths.get(args.length > 0 ? args[0] : "sql");
+        boolean showColumns = false;
+        Path dir = Paths.get("sql");
+        for (String arg : args) {
+            if ("--columns".equals(arg)) {
+                showColumns = true;
+            } else {
+                dir = Paths.get(arg);
+            }
+        }
 
         if (!Files.isDirectory(dir)) {
             System.out.println("目录不存在：" + dir.toAbsolutePath());
@@ -48,6 +61,10 @@ public class SqlDirLineageTool {
         Set<String> allOutputs = new TreeSet<>();
         Set<String> allInputs = new TreeSet<>();
         List<String> unparsed = new ArrayList<>();
+        List<String> unresolved = new ArrayList<>();
+        List<String> starEdges = new ArrayList<>();
+        List<String> leaks = new ArrayList<>();
+        int edgeCount = 0;
 
         for (Path file : files) {
             String sql = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
@@ -79,6 +96,25 @@ public class SqlDirLineageTool {
                         : new TreeSet<>(sources).stream().collect(Collectors.joining(", "));
                 lines.add("  [" + type + "] 输出: " + (target == null ? "-" : target)
                         + "  <- 输入: " + srcPart);
+
+                List<ColumnEdge> edges = lineage.getColumnEdges();
+                edgeCount += edges.size();
+                String statement = statementOf(lineage);
+                for (ColumnEdge edge : edges) {
+                    String desc = describeEdge(edge);
+                    if (edge.getDerivation() == ColumnDerivation.UNRESOLVED) {
+                        unresolved.add(desc);
+                    } else if (edge.getDerivation() == ColumnDerivation.STAR) {
+                        starEdges.add(desc);
+                    }
+                    for (String column : leakedColumns(edge, statement)) {
+                        leaks.add(file.getFileName() + " " + desc + " 的列名 " + column
+                                + " 未出现在原语句中");
+                    }
+                    if (showColumns) {
+                        lines.add("      " + desc + " <- " + edge.getSources());
+                    }
+                }
             }
 
             System.out.println("== " + file + " ==");
@@ -106,5 +142,55 @@ public class SqlDirLineageTool {
             System.out.println("未解析出结果的文件 (" + unparsed.size() + "):");
             unparsed.forEach(f -> System.out.println("  " + f));
         }
+
+        System.out.println();
+        System.out.println("================ 字段级血缘体检 ================");
+        System.out.println("字段级边总数: " + edgeCount);
+        printGroup("列名不在原句中（疑似作用域泄漏）", leaks);
+        printGroup("UNRESOLVED（来源绑定失败，需要人工确认）", unresolved);
+        printGroup("STAR（v1 按约定不展开）", starEdges);
+    }
+
+    /** 边的可读数：目标列 + 加工方式 */
+    private static String describeEdge(ColumnEdge edge) {
+        return edge.getTargetTable() + "." + edge.getTargetColumn()
+                + "[" + edge.getDerivation() + "]";
+    }
+
+    private static String statementOf(TableLineage lineage) {
+        return lineage.getOriginalSql() == null ? "" : lineage.getOriginalSql().toLowerCase();
+    }
+
+    /**
+     * 幽灵列检查：端点列名必须在原句里出现过。伪关系、占位列（expr_N）与通配符不是 SQL 里写的名字。
+     */
+    private static List<String> leakedColumns(ColumnEdge edge, String statement) {
+        List<String> hit = new ArrayList<>();
+        if (statement.isEmpty()) {
+            return hit;
+        }
+        if (isGhost(edge.getTargetColumn(), edge.getTargetTable(), statement)) {
+            hit.add(edge.getTargetColumn());
+        }
+        for (ColumnRef ref : edge.getSources()) {
+            if (isGhost(ref.getColumn(), ref.getBoundTable(), statement)) {
+                hit.add(ref.nodeId());
+            }
+        }
+        return hit;
+    }
+
+    private static boolean isGhost(String column, String table, String statement) {
+        if (column == null || !column.matches("\\w+") || column.startsWith("expr_")
+                || table != null && table.startsWith("#")) {
+            return false;
+        }
+        return !statement.contains(column);
+    }
+
+    private static void printGroup(String title, List<String> items) {
+        System.out.println();
+        System.out.println(title + " (" + items.size() + "):");
+        items.forEach(i -> System.out.println("  " + i));
     }
 }

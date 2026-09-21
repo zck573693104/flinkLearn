@@ -1,5 +1,6 @@
 package com.bigdata.lineage.parser;
 
+import com.bigdata.lineage.parser.model.ColumnEdge;
 import com.bigdata.lineage.parser.model.TableLineage;
 import com.bigdata.lineage.parser.MultiEngineSQLLineageParser;
 import org.junit.jupiter.api.Test;
@@ -577,5 +578,72 @@ public class MultiEngineSQLLineageParserTest {
         TableLineage l = lineages.get(0);
         assertTrue(l.getSourceTables().contains("ods.s24"));
         assertTrue(l.getSourceTables().contains("dim.s23"));
+    }
+
+    // ============================================
+    // 字段级血缘挂载：自动识别引擎后要用同一套判定跑列级提取
+    // ============================================
+
+    @Test
+    public void testColumnEdgesAttachedWithDetectedEngine() {
+        String sql = "INSERT INTO dwd.t30 SELECT id, name AS n FROM ods.s30";
+
+        TableLineage lineage = parser.extractTableLineages(sql).get(0);
+
+        List<ColumnEdge> edges = lineage.getColumnEdges();
+        assertEquals(2, edges.size(), "两条 SELECT 项应有两条字段级边");
+        for (ColumnEdge edge : edges) {
+            assertEquals("FLINK", edge.getEngine(), "边要标记产出它的方言");
+        }
+        assertEquals("ods.s30.id", edges.get(0).getSources().get(0).nodeId());
+        assertEquals("ods.s30.name", edges.get(1).getSources().get(0).nodeId());
+    }
+
+    @Test
+    public void testSparkOnlySyntaxCarriesSparkTaggedColumnEdges() {
+        // LATERAL VIEW 只有 Spark 语法认得：表级与字段级都要落到 Spark 结果上
+        String sql = "INSERT INTO dwd.t31 SELECT e.word FROM ods.s31 "
+                + "LATERAL VIEW explode(arr) e AS word";
+
+        TableLineage lineage = parser.extractTableLineages(sql).get(0);
+        List<ColumnEdge> edges = lineage.getColumnEdges();
+
+        assertFalse(edges.isEmpty());
+        for (ColumnEdge edge : edges) {
+            assertEquals("SPARK", edge.getEngine(), "整条语句的边都出自 Spark 方言");
+        }
+        ColumnEdge target = null;
+        for (ColumnEdge edge : edges) {
+            if ("dwd.t31".equals(edge.getTargetTable())) {
+                target = edge;
+            }
+        }
+        assertNotNull(target, "展开列的最终落点也要有边，实际: " + edges);
+        assertEquals("e", target.getSources().get(0).getQualifier());
+        assertTrue(target.getSources().get(0).nodeId().startsWith("#lat"),
+                "LATERAL VIEW 的产出列要挂在伪关系上: " + target.getSources());
+    }
+
+    @Test
+    public void testBatchLineagesAlsoCarryColumnEdges() {
+        List<TableLineage> lineages = parser.extractBatchLineages(
+                java.util.Arrays.asList("INSERT INTO dwd.t32 SELECT id FROM ods.s32",
+                        "INSERT INTO dwd.t33 SELECT k FROM ods.s33"));
+
+        assertEquals(2, lineages.size());
+        for (TableLineage lineage : lineages) {
+            assertFalse(lineage.getColumnEdges().isEmpty(), "批量提取也要挂字段级血缘");
+        }
+    }
+
+    @Test
+    public void testPureDdlHasEmptyColumnEdgeList() {
+        // 没有 SELECT 的语句字段级结果为空列表而不是 null，Web 层可直接遍历
+        String sql = "CREATE TABLE dwd.t34 (id BIGINT, name STRING) WITH ('connector' = 'kafka')";
+
+        List<TableLineage> lineages = parser.extractTableLineages(sql);
+
+        assertNotNull(lineages.get(0).getColumnEdges());
+        assertTrue(lineages.get(0).getColumnEdges().isEmpty());
     }
 }
