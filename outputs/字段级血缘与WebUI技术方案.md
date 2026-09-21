@@ -359,59 +359,94 @@ Flink 侧不需要新增星号规则（`tablePath DOT MULT` 已在 `:230`）。
     <executions><execution><goals><goal>repackage</goal></goals></execution></executions>
   </plugin>
   ```
-  起服务：`mvn spring-boot:run`（或 `java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`）。
+  起服务：`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`（M3 实测走的是这条）；`mvn -o spring-boot:run` 未验证过离线仓库是否够插件 `run` 目标的依赖，别当既定事实用。
 - **不再需要 spring 族版本对齐**。`spring-expression:5.3.26` 已随 §2.0 的 pom 精简删除，spring 版本全部由 starter-web 2.7.18 带的 5.3.31 单点决定，不存在混版本。
 - 仍需保留的一条：排 `spring-boot-starter-logging`。项目现在是 `slf4j-api:1.7.25` + `log4j-slf4j-impl:2.9.1`（`log4j2.xml` 在 resources），starter 默认带的 logback 会造成 slf4j 双绑定。若嫌麻烦，替代方案是反过来删掉本项目的 log4j2 三件套、改用 starter 默认 logback——**推荐前者**（改动面小，且 `log4j2.xml` 的 warn 级别策略沿用至今）。
 
-### 7.2 组件
+### 7.2 组件（M3 已按此落地）
 
 ```
 com.bigdata.lineage.web/
-  LineageWebApplication.java     @SpringBootApplication(scanBasePackages="com.bigdata.lineage.web")
-  CorpusScanner.java             遍历 lineage.scan-dir 下 .sql → SqlSplitUtils → MultiEngineSQLLineageParser
-  LineageStore.java              AtomicReference<Snapshot> + 索引（表→节点、表→边、列→边）
-  GraphAssembler.java            子图裁剪：direction(up/down/both) + depth + root
-  api/LineageApiController.java  下列端点
-  api/ApiErrorAdvice.java        @ControllerAdvice，统一 {success,message,data}
+  LineageWebApplication.java     @SpringBootApplication(scanBasePackages="...web") + @Bean LineageStore
+  LineageProperties.java         @ConfigurationProperties("lineage")：scanDir、rescanOnStart
+  CorpusScanner.java             ApplicationRunner：递归 .sql → 逐语句解析 → 回写 jobId → 换快照
+  GraphAssembler.java            子图裁剪（root/direction/depth）+ Cytoscape JSON 序列化
+  api/LineageApiController.java  下列 9 个端点
+  api/ApiResponse.java           {success,data,message} 信封
+  api/ApiErrorAdvice.java        @RestControllerAdvice：IAE/IO → 400，其余 → 500
+com.bigdata.lineage.graph/
+  ScanReport.java                质量账本：计数是全集，明细截到 200 条
+  LineageStore.java              AtomicReference<Snapshot>；Snapshot = 图 + 账本 + jobId→SQL 索引
 ```
 
-配置（写入 `application.yml`，把现有死配置真正接上）：
+三条实现期定下来的口径，后续改动别再动摇：
+
+- **jobId = 「相对路径#该文件的血缘语句序号」**（`ck/user_app_data_ck_dml.sql#1`），由 `CorpusScanner` 回写进 `ColumnEdge.jobId`（解析层不填，就是留给调用方的口子），`ColumnGraphBuilder.localName()` 优先采纳它。图构建层默认的内容 SHA-256 只用于 `/api/parse` 这种没有文件上下文的场景。**扫描器必须用 `new MultiEngineSQLLineageParser(false)` 关掉缓存**：缓存返回的是同一批可变 DTO，逐文件回写 jobId 会污染上一轮。
+- **坏目录只报错不换快照**：`rescan` 对不存在的目录抛 `IllegalArgumentException`（API 层回 400），已扫到的血缘留在原处；`run()` 里的启动扫描失败只 warn，服务照样起来跑空快照，方便单独验证静态页。
+- **`Snapshot` 额外持有 `jobId → 原文` 索引**，`/api/edge/column` 与 `/api/table/{t}/columns` 据此回显 `sqlText`。账本与图都在扫描期算成不可变值，读侧不保留任何 Lombok 可变 DTO。
+
+配置（`application.yml`，M3 后仍就这三个键，静态资源键不需要加——`src/main/resources/static` 是 Boot 默认映射）：
 
 ```yaml
 server: { port: 8080 }
 lineage:
   scan-dir: sql          # 语料目录，可传参覆盖
-  engines: auto          # 交给 MultiEngineSQLLineageParser 自动探测
   rescan-on-start: true
 ```
 
-配置：`application.yml` 已在 §2.0 精简为 `server.port` + `lineage.scan-dir` + `lineage.rescan-on-start`（原来那三段 mysql/mybatis/jsqlparser 死配置已删，`com.github.jsqlparser` 和 `com.bigdata.lineage.model` 早就不存在了）。M3 只需往里补 spring 的静态资源相关键，不需要再清理。持久化不引 `spring-boot-starter-jdbc`，因此不会触发 `DataSourceAutoConfiguration` 因缺数据源而启动失败。
+配置：`application.yml` 已在 §2.0 精简为以上三键（原来那三段 mysql/mybatis/jsqlparser 死配置已删）。持久化不引 `spring-boot-starter-jdbc`，因此不会触发 `DataSourceAutoConfiguration` 因缺数据源而启动失败。
 
-### 7.3 REST 契约
+### 7.3 REST 契约（已实现，参数以下表为准）
 
 | 方法 | 路径 | 用途 | 关键参数 |
 |---|---|---|---|
-| GET | `/api/overview` | 统计：文件数/表数/字段边数/失败语句数/未解析边数 | — |
-| GET | `/api/tables` | 表列表（含上下游度数、所在层、是否有列级信息） | `q`（子串/正则）、`layer`、`onlyUnresolved` |
-| GET | `/api/graph/table` | 表级分层 DAG | `root`、`direction=up\|down\|both`、`depth`（默认 2，上限 5）、`layer` |
-| GET | `/api/table/{table}/columns` | 该表字段清单 + 每字段来源摘要 | — |
+| GET | `/api/overview` | 统计：文件数/语句数/表数/字段边数/表边数/parseError/UNRESOLVED/STAR/最大层/环 | — |
+| GET | `/api/tables` | 表列表（含上下游度数、所在层、字段数） | `q`（大小写不敏感**子串**）、`layer`、`onlyUnresolved` |
+| GET | `/api/graph/table` | 表级分层 DAG | `root`（空=全量）、`direction=up\|down\|both`、`depth`（默认 2，上限 8） |
+| GET | `/api/table/{table:.+}/columns` | 该表字段清单 + 每字段直接来源（带证据）与去向 | — |
 | GET | `/api/graph/column` | 字段级链路子图 | `table`、`column`（可空=整表）、`depth`（默认 3） |
-| GET | `/api/edge/column` | 单条边的证据 | `from`、`to` → `{jobId,file,ordinal,derivation,transform,hops[],sqlText,confidence}` |
-| GET | `/api/issues` | 质量视图：parseError 语句、`UNRESOLVED`/`STAR` 边、孤儿表 | `type` |
-| POST | `/api/parse` | 贴 SQL 试解析（只读、不落库） | `{sql}` → 表级 + 列级 JSON |
+| GET | `/api/edge/column` | 单条边的证据 | `from`、`to` → `[{jobId,ordinal,engine,derivation,transform,hops[],sqlText,confidence}]` |
+| GET | `/api/issues` | 质量视图 | `type=all\|parseError\|unresolved\|star\|noLineage\|orphan` |
+| POST | `/api/parse` | 贴 SQL 试解析（只读、不落库） | `{sql}` → `{statements,graph,columnEdges}` |
 | POST | `/api/scan` | 重扫目录，原子换快照 | `{dir?}` → 新统计 |
 
-响应统一 `{ "success": bool, "data": ..., "message": ... }`，与既有 `TableLineageController` 的手工 Map 风格一致，前端只认一种信封。
+与原计划的三处偏离，都是实现期判断，记录在此以免被当成漏做：
 
-图 JSON schema（Cytoscape 直接可喂）：
+- `q` 只做子串不做正则：表名里的 `.` 是正则元字符，用户输入的 `dwd.t` 会匹配得莫名其妙。
+- `/api/graph/table` 去掉了 `layer` 参数：邻域图再按层切一刀只会留下断开的点，层过滤归 `/api/tables`。
+- `/api/edge/column` 返回**数组**：同一对端点可能有不同 derivation 的多条边（构建层按 `from>to>derivation` 去重），只回一条等于替用户挑了个答案。
+- 表名/列名一律大小写不敏感寻址，短名唯一时补全；短名冲突直接报"不唯一，请用全名"，不猜。
+
+响应统一 `{ "success": bool, "data": ..., "message": ... }`（HTTP 状态码与之对齐），前端只认一种信封。
+
+图 JSON schema（Cytoscape 直接可喂）。表级与字段级共用外层形状，字段级视图的节点是列：
 
 ```json
 { "nodes": [ {"id":"dws_pms.dws_x","name":"dws_x","db":"dws_pms","layer":3,
-              "kind":"physical|derived","colCount":42} ],
-  "edges": [ {"id":"e:..","from":"dwd_pms.dwd_a.emp_id","to":"dws_pms.dws_x.emp_cnt",
-              "derivation":"AGGREGATE","confidence":0.8,"jobId":"part3.sql#7"} ],
+              "kind":"physical","colCount":42} ],
+  "edges": [ {"id":"t:dwd_pms.dwd_a>dws_pms.dws_x","from":"dwd_pms.dwd_a",
+              "to":"dws_pms.dws_x","jobId":"part3.sql#7"} ],
   "ranks": {"dwd_pms.dwd_a":1}, "cyclic": ["ods_x"] }
 ```
+
+```json
+// /api/graph/column：nodes 为列，edges 为折叠后的字段边
+{ "nodes": [ {"id":"dws_pms.dws_x.emp_cnt","column":"emp_cnt","table":"dws_pms.dws_x",
+              "name":"dws_x","local":false,"layer":3,"kind":"column"} ],
+  "edges": [ {"id":"c:..>..#AGGREGATE","from":"dwd_pms.dwd_a.emp_id","to":"dws_pms.dws_x.emp_cnt",
+              "derivation":"AGGREGATE","confidence":0.8,"transform":"count(emp_id)",
+              "hops":["dwd_pms.dwd_a.emp_id","[part3.sql#7]#sub1.c","dws_pms.dws_x.emp_cnt"],
+              "engine":"FLINK","jobId":"part3.sql#7","ordinal":0} ],
+  "ranks": {...}, "cyclic": [] }
+```
+
+### 7.4 M3 验收实测（2026-09-21）
+
+- `mvn -o clean test` **245 绿**（M2 结束时 228；本轮 +16 Web 单测：`GraphAssemblerTest` 12 + `CorpusScannerTest` 4，+1 `LineageStoreTest` 的 SQL 索引用例）。**离线仓库没有 `spring-boot-test`/`spring-test` 任何版本**，所以 `@SpringBootTest` 这条路走不通：Web 层的验证口径 = 纯单测（裁剪/扫描器契约）+ 真起服务 curl 全端点。
+- `mvn -o package -DskipTests` → `java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar` 起在 8080，repackage 正常（21MB 可执行 jar）。
+- `sql/` 语料实测 `/api/overview`：16 文件 / 26 语句 / 17 表 / 13 张有字段 / 2329 字段边 / 6 表边 / maxLayer 1 / 0 UNRESOLVED / 0 STAR / 3 parseError（就是 §2.0 里那三段建表 DDL）——与 M2 基线逐项一致，说明引入服务层没有动到血缘。
+- 边证据实测 `kafka_user_app_data.eventbodylist → user_app_data.app_name`：`jobId=ck/user_app_data_ck_dml.sql#1`、`hops` 里带着折掉的 `[...sql#1]#unnest1.app_name`、`sqlText` 回显原文；扫描日志 0 条"没有产出边可折"告警。
+- `GET /` 目前 404（M4 才放 `static/index.html`）。
 
 ## 8. 前端层
 
@@ -456,7 +491,7 @@ PNG 导出（`cytoscape.toBlob`）、子图 JSON 导出、URL hash 携带 `root/
 | **M0 语法缺口** | ✅ 已完成：§5 三处改造 + 探针验证 `WITH t(a,b)`、`LATERAL VIEW ... t AS c` | `mvn clean test` 全绿，`run-lineage.bat sql` 16 文件/17 输出表/0 纯输入表 | 0.5d |
 | **M1 列级解析核心** | ✅ 已完成：`ColumnRef/ColumnEdge` + `QueryScope` 栈 + 三方言共用一份 `ColumnLineageEngine` | 207 测试全绿；语料 2376 条列边，幽灵列/UNRESOLVED/STAR 均 0 | 2d |
 | **M2 归一化/图模型** | ✅ 已完成：`ColumnGraphBuilder` 折叠 + `ColumnEdge.targetInternal` 标记、`LocalRelation` 语句命名空间、`LayeredDagBuilder`（迭代 Tarjan+Kahn）、`LineageStore` 快照 | 228 测试全绿（新增 21）：环/自依赖、20000 节点长链、多 CTE 同名、别名解引用、hop 证据；全语料建图 17 节点/2329 列边/0 未折叠伪节点/0 缺层号 | 1d |
-| **M3 服务层** | starter-web + Scanner + 9 个端点 + `@ControllerAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1） | `curl` 逐端点验证；`mvn spring-boot:run` 起得来；日志无 slf4j 双绑定告警 | 1d |
+| **M3 服务层** | ✅ 已完成：starter-web 2.7.18 + `CorpusScanner`（jobId=文件#序号）+ `ScanReport` 账本 + 9 个端点 + `ApiResponse`/`ApiErrorAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1）。实测细节见 §7.4 | 245 测试全绿（新增 17）；真起 jar 逐端点 `curl` 通过，overview 与 M2 基线逐项一致；0 条折叠告警；无 slf4j 双绑定 | 1d |
 | **M4 前端** | vendor 资产 + 三栏 + 两种图 + 详情证据 | **必须真浏览器点开验证**（走 browser-use），表级/字段级各跑一遍金路径 + 星号/未解析边界 | 2d |
 | **M5 语料回归** | 用忽略的临时目录跑涉密语料列级质量巡检（只本地，不落仓库），修问题 | 泄漏巡检 0；列级"编造列"0 | 1d |
 | **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理。剩余：`column_lineage` DDL 升级脚本（随 §10 持久化阶段出）、`superior-sql-parser-temp/` 待你确认删除 | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线 | 0d |
@@ -504,7 +539,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 - 单测（新增 `ColumnLineageFlinkTest` / `ColumnLineageSparkTest` / `ColumnLineagePrestoTest` / `ColumnLineageChainTest`，合计 ≥45 例）：直通、别名、限定符、CASE、CONCAT 多来源、聚合、开窗、子查询多跳、CTE 链、`INSERT (...)` 列清单位置对齐、`SELECT *` 与 `t.*` 的 STAR、绑不上的 UNRESOLVED、Spark LATERAL VIEW 产出列、Presto UNNEST 列别名、Flink TVF/时态表。
 - 语料：`sql/` 16 文件跑列级 JSON 导出工具（新建 `SqlDirColumnLineageTool`，与 `SqlDirLineageTool.java:24-110` 并列**不改它**），人工巡检 TOP 未解析边。
-- Web：每端点 `@WebMvcTest` 或 `curl` 冒烟；`/api/parse` 断言与 `MultiEngineSQLLineageParser` 直调结果一致。
+- Web（M3 已按此执行）：`GraphAssemblerTest`/`CorpusScannerTest` 钉住裁剪与扫描器契约，9 个端点全部真起 jar 用 `curl` 冒烟（见 §7.4）。`@WebMvcTest`/`@SpringBootTest` 都依赖 `spring-boot-test`+`spring-test`，**离线仓库一个版本都没有**，不要计划走这条路。
 - 前端：**真实浏览器点一遍**（M4 验收），不做"我以为能渲染"的声明。
 - 构建纪律（既有记忆约束）：报"通过"之前必 `mvn clean test`，不信陈旧 `target/`。
 - 涉密语料纪律：任何来自 `D:\ai coding\...` 的 SQL 只在 git 忽略的 `tmpdb/` 复现，**不复制进仓库、不写进用例、不提交**；提交前删除 `tmpdb/`（本分支截至 2026-09-21 已清空，M5 复现时重新拷贝）。
@@ -536,7 +571,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-1. **基线（本分支当前已满足）**：`mvn -o clean test` 125/125、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN、`grep -r "org.apache.flink" src` 为空。功能落地后用例数 ≥125+53，且这三条不被破坏。
+1. **基线（本分支当前已满足）**：`mvn -o clean test` 245/245（M3 后）、`run-lineage.bat sql` 16 文件/17 输出表/3 WARN、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这三条不被破坏。
 2. `mvn spring-boot:run` 后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。
 3. 点击任一有列级信息的表 → 字段链路图渲染出至少一条 2 跳以上链路（CTE/子查询中间节点可见）。
 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致。

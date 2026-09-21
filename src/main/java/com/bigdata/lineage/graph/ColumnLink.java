@@ -39,7 +39,8 @@ public final class ColumnLink {
         this.hops = Collections.unmodifiableList(hops);
     }
 
-    static String columnId(String table, String column) {
+    /** 列节点标识：{@code table.column}。Web 层按表名+列名寻址同一节点时复用这个约定 */
+    public static String columnId(String table, String column) {
         return table == null || table.isEmpty() ? column : table + "." + column;
     }
 

@@ -19,6 +19,7 @@
         <slf4j.version>1.7.25</slf4j.version>
         <log4j2.version>2.9.1</log4j2.version>
         <junit5.version>5.9.3</junit5.version>
+        <spring-boot.version>2.7.18</spring-boot.version>
     </properties>
 
     <dependencies>
@@ -54,6 +55,20 @@
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
             <version>${log4j2.version}</version>
+        </dependency>
+
+        <!-- WebUI 服务层：只用到 MVC + Jackson，不引 jdbc（ DataSourceAutoConfiguration 会因缺数据源启动失败） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+            <exclusions>
+                <!-- 项目已有 log4j-slf4j-impl，starter-logging 会带 logback 造成 slf4j 双绑定 -->
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- JUnit 5；FlinkSQLLineageParserTest 仍是 JUnit4 写法，需 vintage 引擎在 5 平台下运行 -->
@@ -139,6 +154,23 @@
                 <configuration>
                     <argLine>-Dfile.encoding=UTF-8</argLine>
                 </configuration>
+            </plugin>
+            <!-- 可执行 jar：java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar 直接起 WebUI。
+                 本分支已无 Flink 作业，不需要用 profile 把插件隔离开。 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+                <configuration>
+                    <mainClass>com.bigdata.lineage.web.LineageWebApplication</mainClass>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

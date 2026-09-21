@@ -2,7 +2,10 @@ package com.bigdata.lineage.graph;
 
 import com.bigdata.lineage.parser.model.TableLineage;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -13,12 +16,23 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class LineageStore {
 
-    private final AtomicReference<Snapshot> ref = new AtomicReference<>(Snapshot.empty());
+    private final AtomicReference<Snapshot> ref = new AtomicReference<>(Snapshot.EMPTY);
 
-    /** 重扫完成后一次性换掉整张图与其统计口径 */
-    public void replace(List<TableLineage> statements, String source, long durationMillis) {
-        ref.set(new Snapshot(ColumnGraphBuilder.build(statements), statements, source,
-                durationMillis));
+    /**
+     * 重扫完成后一次性换掉整张图与账本。
+     *
+     * @param sqlByJob 语句标识 → 原文，供边面板回显 SQL；键必须与图内 {@code ColumnLink.getJobId()} 一致
+     */
+    public void replace(List<TableLineage> statements, ScanReport report, String source,
+                        Map<String, String> sqlByJob, long durationMillis) {
+        ref.set(new Snapshot(ColumnGraphBuilder.build(statements),
+                report == null ? ScanReport.empty() : report, source,
+                immutable(sqlByJob), durationMillis));
+    }
+
+    private static Map<String, String> immutable(Map<String, String> source) {
+        return source == null ? Collections.<String, String>emptyMap()
+                : Collections.unmodifiableMap(new LinkedHashMap<>(source));
     }
 
     public Snapshot current() {
@@ -29,41 +43,44 @@ public final class LineageStore {
         return current().getGraph();
     }
 
-    /** 一份快照 = 一张图 + 建图的那批语句。字段全部 final，可安全跨线程发布 */
+    /** 一份快照 = 一张图 + 一份账本 + 语句原文索引。字段全部 final，可安全跨线程发布 */
     public static final class Snapshot {
 
-        private static final Snapshot EMPTY =
-                new Snapshot(LineageGraph.empty(), java.util.Collections.<TableLineage>emptyList(),
-                        "", 0L);
+        private static final Snapshot EMPTY = new Snapshot(LineageGraph.empty(),
+                ScanReport.empty(), "", Collections.<String, String>emptyMap(), 0L);
 
         private final LineageGraph graph;
-        private final int statementCount;
+        private final ScanReport report;
         private final String source;
+        private final Map<String, String> sqlByJob;
         private final long durationMillis;
 
-        Snapshot(LineageGraph graph, List<TableLineage> statements, String source,
-                 long durationMillis) {
+        Snapshot(LineageGraph graph, ScanReport report, String source,
+                 Map<String, String> sqlByJob, long durationMillis) {
             this.graph = graph;
-            this.statementCount = statements == null ? 0 : statements.size();
+            this.report = report;
             this.source = source;
+            this.sqlByJob = sqlByJob;
             this.durationMillis = durationMillis;
-        }
-
-        static Snapshot empty() {
-            return EMPTY;
         }
 
         public LineageGraph getGraph() {
             return graph;
         }
 
-        public int getStatementCount() {
-            return statementCount;
+        /** 解析质量账本：文件数、语句数、parseError/UNRESOLVED/STAR 计数与明细 */
+        public ScanReport getReport() {
+            return report;
         }
 
         /** 扫描目录或其他来源标识，用于 UI 显示"这是哪儿的血缘" */
         public String getSource() {
             return source;
+        }
+
+        /** 语句原文；扫描器没登记过这条语句时返回 null，面板据此留白而不是造一段假 SQL */
+        public String sqlOf(String jobId) {
+            return jobId == null ? null : sqlByJob.get(jobId);
         }
 
         public long getDurationMillis() {
