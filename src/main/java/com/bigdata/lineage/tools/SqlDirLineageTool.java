@@ -1,5 +1,8 @@
 package com.bigdata.lineage.tools;
 
+import com.bigdata.lineage.graph.ColumnGraphBuilder;
+import com.bigdata.lineage.graph.GraphNode;
+import com.bigdata.lineage.graph.LineageGraph;
 import com.bigdata.lineage.parser.MultiEngineSQLLineageParser;
 import com.bigdata.lineage.parser.model.ColumnDerivation;
 import com.bigdata.lineage.parser.model.ColumnEdge;
@@ -64,11 +67,13 @@ public class SqlDirLineageTool {
         List<String> unresolved = new ArrayList<>();
         List<String> starEdges = new ArrayList<>();
         List<String> leaks = new ArrayList<>();
+        List<TableLineage> all = new ArrayList<>();
         int edgeCount = 0;
 
         for (Path file : files) {
             String sql = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
             List<TableLineage> lineages = parser.extractTableLineages(sql);
+            all.addAll(lineages);
 
             List<String> lines = new ArrayList<>();
             for (TableLineage lineage : lineages) {
@@ -149,6 +154,47 @@ public class SqlDirLineageTool {
         printGroup("列名不在原句中（疑似作用域泄漏）", leaks);
         printGroup("UNRESOLVED（来源绑定失败，需要人工确认）", unresolved);
         printGroup("STAR（v1 按约定不展开）", starEdges);
+
+        reportGraph(all);
+    }
+
+    /**
+     * 图构建体检：折叠后不该再有伪节点，每个物理表都该有层号。
+     * 这两条在单测里各管一段，只有在全语料上跑才看得出漏折与错接。
+     */
+    private static void reportGraph(List<TableLineage> statements) {
+        LineageGraph graph = ColumnGraphBuilder.build(statements);
+        List<String> leaks = new ArrayList<>();
+        List<String> unranked = new ArrayList<>();
+        int local = 0;
+        for (GraphNode node : graph.getNodes().values()) {
+            if (node.getId().contains("#")) {
+                leaks.add(node.getId());
+            }
+            if (node.isLocal()) {
+                local++;
+            } else if (!graph.getRanks().containsKey(node.getId())) {
+                unranked.add(node.getId());
+            }
+        }
+        System.out.println();
+        System.out.println("================ 血缘图体检 ================");
+        System.out.println("节点: " + graph.size() + "（语句内关系 " + local
+                + "，物理表 " + (graph.size() - local) + "）");
+        System.out.println("字段级边: " + graph.getColumnLinks().size()
+                + "，表级边: " + graph.getTableLinks().size());
+        System.out.println("有字段级血缘的表: " + graph.tableCountWithColumns());
+        System.out.println("最大层号: " + maxRank(graph) + "，环上表: " + graph.getCyclicTables());
+        printGroup("未折叠的伪节点（必须为 0）", leaks);
+        printGroup("没有层号的物理表（必须为 0）", unranked);
+    }
+
+    private static int maxRank(LineageGraph graph) {
+        int max = 0;
+        for (Integer rank : graph.getRanks().values()) {
+            max = Math.max(max, rank);
+        }
+        return max;
     }
 
     /** 边的可读数：目标列 + 加工方式 */

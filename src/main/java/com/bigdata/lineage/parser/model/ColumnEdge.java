@@ -36,6 +36,14 @@ public class ColumnEdge {
     /** FLINK / SPARK / PRESTO */
     private String engine;
 
+    /**
+     * 目标关系是不是引擎内部的中间关系（子查询、explode/unnest 行）。
+     *
+     * <p>带别名的子查询以别名登记，名字与 CTE、物理表无异，只有引擎知道它是中间产物；
+     * 图构建层据此折掉它（CTE 不折，它是字段来源的中间站）。
+     */
+    private boolean targetInternal;
+
     public double getConfidence() {
         return derivation == null ? 0.0 : derivation.getConfidence();
     }

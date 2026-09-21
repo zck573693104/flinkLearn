@@ -168,29 +168,34 @@ src/main/resources/{application.yml, log4j2.xml}
 
 ## 4. 解析层设计：字段级血缘
 
-### 4.1 新增数据模型（`com.bigdata.lineage.parser.model`）
+### 4.1 新增数据模型（`com.bigdata.lineage.parser.model`，M1 已落地，字段以下为准）
 
 ```java
 /** 一个字段的限定引用：解析期的中间产物，未保证绑定到物理表 */
 public class ColumnRef {
     String qualifier;   // 限定符：表名或别名，可为 null（未限定）
     String column;      // 列名，归一化小写、去反引号
-    String rawText;     // 原始文本，仅用于 UI 证据展示
+    String boundTable;  // 作用域里解析出的关系（物理表全名/CTE 名/子查询名），未绑定为 null
+    String rawText;     // 原始文本，仅用于 UI 证据展示（字段路径 info_str 之类靠它）
+    boolean isResolved();
+    String nodeId();    // table.column，未绑定时退化为 qualifier.column 或裸列名
 }
 
 /** 一条字段级血缘边：statement 粒度，target 侧唯一 */
 public class ColumnEdge {
-    String targetTable;      // 归一化全限定表名
+    String targetTable;      // 归一化全限定表名，或语句内关系名（CTE / 子查询别名 / #sub1）
     String targetColumn;
-    List<ColumnRef> sources; // 该目标字段的来源列集合（表达式可多个）
-    String derivation;       // 见 4.5 枚举
+    List<ColumnRef> sources; // 该目标字段的来源列集合（表达式可多个，常量为空）
+    ColumnDerivation derivation; // 见 4.5 枚举，confidence 由枚举给出
     String transform;        // 归一化表达式文本，如 concat(a, '-', b)
     int ordinal;             // SELECT 列表下标，用于位置对齐与证据定位
-    double confidence;
-    String jobId;            // 文件路径 + 语句序号，如 part3.sql#7
-    String engine;           // FLINK | SPARK | PRESTO
+    String jobId;            // 文件路径 + 语句序号，如 part3.sql#7；单独解析时为 null
+    String engine;           // FLINK | SPARK | PRESTO，建边时一次写定，避免在缓存共享对象上补字段
+    boolean targetInternal;  // 目标关系是不是引擎内部中间关系，图构建层据此折叠（§6）
 }
 ```
+
+`targetInternal` 是 M2 加的：带别名的子查询以别名登记，名字与 CTE、物理表同形，只有引擎知道它是中间产物，所以由边带标记而不是让下游猜名字。
 
 同时给 `TableLineage` 增一个字段（不复用旧 DTO）：
 
@@ -308,13 +313,17 @@ final class Relation {
 
 Flink 侧不需要新增星号规则（`tablePath DOT MULT` 已在 `:230`）。
 
-## 6. 归一化与图构建层
+## 6. 归一化与图构建层（M2 已按此实现，包 `com.bigdata.lineage.graph`）
 
-- `NameNormalizer.normalize(String)`：去反引号/双引号、`toLowerCase(Locale.ROOT)`、折叠多余点号；与 `MultiEngineSQLLineageParser` 缓存键 `sql.trim().toLowerCase()`（`:68`）保持同样的大小写口径，避免同一表两个节点。
-- **子查询伪节点折叠**：`subquery#7.emp_id` 这类中间节点不对用户暴露，图构建时把 `dwd.a → subq#7.emp_id → dws.x` 合成 `dwd.a →(EXPRESSION) dws.x`，但**保留完整 hop 列表**在边的 `evidence.hops` 里，UI 详情面板展示逐跳链路。
-- **CTE 节点保留**：CTE 是"字段来源"的关键中间站，作为 `derived` 类型节点渲染（虚线边框 + 灰底），与物理表区分，但不折叠。
-- **分层**：Tarjan 缩强连通（回边/自依赖要能出现，增量表 `INSERT INTO dwd SELECT ... FROM dwd` 真实存在）→ 在 DAG 上跑 Kahn 最长路径得 rank → 同 rank 内按库名前缀分组。环上节点 rank 相同，UI 用红色回边标注。
-- `LineageStore`：`AtomicReference<Snapshot>`，`Snapshot` 内部全部 `Collections.unmodifiable*`；重扫时整块替换，读侧无锁。缓存语义沿用 `SqlCache` 的 LRU 思路，但快照不做增量 diff（v1 简单可靠）。
+- `NameNormalizer.normalizeQualified(String)`（已有，M2 直接复用）：逐段去反引号/双引号 + `toLowerCase(Locale.ROOT)`；与 `MultiEngineSQLLineageParser` 缓存键 `sql.trim().toLowerCase()`（`:68`）同一口径，避免同一表两个节点。表级边与列端点在 `ColumnGraphBuilder.StatementContext` 里都先归一化再入图。
+- **中间关系折叠**：`ColumnGraphBuilder` 两趟扫每条语句——先把"引擎内部关系"的产出边收进 `StatementContext.producers`，再折叠非内部边的来源，`walk` 顺着 producers 上溯到真实关系，把 `dwd.a → s.v → dws.x` 合成一跳，完整链路留在 `ColumnLink.hops`（含被折掉的中间列）给 UI 详情面板。
+  - 关键坑：**带别名的子查询以别名登记**（`ColumnLineageEngine.registerRef` → `subTarget = alias != null ? alias : nextPseudo("sub")`），名字与 CTE、物理表完全同形，靠 `#` 前缀判断会漏掉语料里绝大多数子查询。因此由引擎在产出边时打 `ColumnEdge.targetInternal` 标记（`internalRelations` 集合在 `registerRef`/`registerExpansion` 登记），图构建层只认这个标记。
+  - 折叠后加工方式取**整条链置信度最低**的那一档（`weakest`）：外层 `IDENTITY` 套内层 `AGGREGATE` 只能是 `AGGREGATE`。
+  - 标了内部却没有产出边可折（引擎漏边）时**丢弃该跳并 log.warn**，宁缺勿假；`SqlDirLineageTool` 的"未折叠的伪节点"一节把这类残留变成可见计数（全语料当前为 0）。
+- **CTE 节点保留 + 语句命名空间**：CTE 是"字段来源"的关键中间站，不折叠，作为 `GraphNode.isLocal()` 节点渲染（虚线边框 + 灰底）。但 CTE 名、伪节点名、绑不上的限定符都只在语句内唯一，语料里 `tmp`/`t`/`c` 跨语句复用，所以这些名字统一登记为 `[jobId]name`（`LocalRelation`）。语句标识取 `ColumnEdge.jobId`，其次取语句文本的 SHA-256 短摘要，最后才退回列表下标——用下标会在"分文件解析再拼列表"时把两个文件的同名 CTE 接成一个节点。
+- **分层**：`LayeredDagBuilder` 先 Tarjan 缩强连通（**迭代实现**，20000 节点长链有回归测试钉住，递归 DFS 在语料规模会打穿栈），再在缩点 DAG 上跑 Kahn 最长路径得 rank；自依赖与互查表按 SCC 同层并落入 `Layers.getCyclic()`，UI 用红色回边标注。分层只跑物理表——语句内关系各自成岛。
+- `LineageStore`：`AtomicReference<Snapshot>`，`Snapshot` = 一张不可变 `LineageGraph` + 语句数 + 来源标识 + 耗时；重扫时整块替换引用，读侧无锁且一次请求内看见的必然是同一次扫描。缓存语义沿用 `SqlCache` 的 LRU 思路，但快照不做增量 diff（v1 简单可靠）。
+- 边去重：`ColumnLink` 按 `from>to>derivation`、`TableLink` 按 `from>to` 去重——语料里同一对表被多条语句写入是常态，并排两条一样的边只会让 UI 抖动。
 
 ## 7. 服务层：Spring Boot 引入方式
 
@@ -444,9 +453,9 @@ PNG 导出（`cytoscape.toBlob`）、子图 JSON 导出、URL hash 携带 `root/
 
 | 阶段 | 内容 | 验收 | 估时 |
 |---|---|---|---|
-| **M0 语法缺口** | §5 三处改造 + 探针验证 `WITH t(a,b)`、`LATERAL VIEW ... t AS c` | `mvn clean test` 全绿（现 125 + 新增 ≥8），`run-lineage.bat sql` 保持 16/17/3 | 0.5d |
-| **M1 列级解析核心** | `ColumnRef/ColumnEdge` + `QueryScope` 栈 + 三方言 Visitor 绑定算法 | 每方言 ≥12 个列级断言测试；§11 五条 oracle 全绿 | 2d |
-| **M2 归一化/图模型** | `NameNormalizer`、伪节点折叠、Tarjan+Kahn 分层、`LineageStore` 快照 | 环/自依赖用例、多 CTE 链用例、别名解引用用例通过 | 1d |
+| **M0 语法缺口** | ✅ 已完成：§5 三处改造 + 探针验证 `WITH t(a,b)`、`LATERAL VIEW ... t AS c` | `mvn clean test` 全绿，`run-lineage.bat sql` 16 文件/17 输出表/0 纯输入表 | 0.5d |
+| **M1 列级解析核心** | ✅ 已完成：`ColumnRef/ColumnEdge` + `QueryScope` 栈 + 三方言共用一份 `ColumnLineageEngine` | 207 测试全绿；语料 2376 条列边，幽灵列/UNRESOLVED/STAR 均 0 | 2d |
+| **M2 归一化/图模型** | ✅ 已完成：`ColumnGraphBuilder` 折叠 + `ColumnEdge.targetInternal` 标记、`LocalRelation` 语句命名空间、`LayeredDagBuilder`（迭代 Tarjan+Kahn）、`LineageStore` 快照 | 228 测试全绿（新增 21）：环/自依赖、20000 节点长链、多 CTE 同名、别名解引用、hop 证据；全语料建图 17 节点/2329 列边/0 未折叠伪节点/0 缺层号 | 1d |
 | **M3 服务层** | starter-web + Scanner + 9 个端点 + `@ControllerAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1） | `curl` 逐端点验证；`mvn spring-boot:run` 起得来；日志无 slf4j 双绑定告警 | 1d |
 | **M4 前端** | vendor 资产 + 三栏 + 两种图 + 详情证据 | **必须真浏览器点开验证**（走 browser-use），表级/字段级各跑一遍金路径 + 星号/未解析边界 | 2d |
 | **M5 语料回归** | 用忽略的临时目录跑涉密语料列级质量巡检（只本地，不落仓库），修问题 | 泄漏巡检 0；列级"编造列"0 | 1d |

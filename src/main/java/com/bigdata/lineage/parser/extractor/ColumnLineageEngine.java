@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,6 +52,11 @@ final class ColumnLineageEngine {
 
     private final List<ColumnEdge> edges = new ArrayList<>();
     private int pseudoCounter;
+    /**
+     * 只在这条语句里成立的中间关系名：子查询（带别名时以别名登记）与 explode/unnest 的展开行。
+     * 图构建层要折掉它们，但光看名字分不出 {@code s} 是子查询还是 CTE、物理表，所以由边带着标记走。
+     */
+    private final Set<String> internalRelations = new LinkedHashSet<>();
 
     /**
      * @param engine FLINK / SPARK / PRESTO，在建边时一次写定：调用方若在缓存结果上补这个字段，
@@ -344,6 +350,8 @@ final class ColumnLineageEngine {
         if (sub != null) {
             String alias = uidOf(childRule(ref, "alias"));
             String subTarget = alias != null ? alias : nextPseudo("sub");
+            // 带别名时以别名登记，但它在图上仍是中间产物：先记名，边才带得走这个标记
+            internalRelations.add(subTarget);
             List<String> output = processQuery(sub, scope, subTarget, null);
             scope.register(Relation.derived(subTarget, output), alias);
         }
@@ -783,7 +791,18 @@ final class ColumnLineageEngine {
     }
 
     private String nextPseudo(String kind) {
-        return "#" + kind + (++pseudoCounter);
+        String name = "#" + kind + (++pseudoCounter);
+        internalRelations.add(name);
+        return name;
+    }
+
+    /**
+     * 边指向的关系是否是引擎内部的中间关系（子查询、展开行）。图构建层要折掉它们，
+     * 但名字帮不了它：带别名的子查询就以别名命名（{@code s}、{@code x}），跟 CTE、物理表
+     * 长得一样。只有这里知道哪些是中间产物，所以由引擎标出来。
+     */
+    private boolean isInternal(String relation) {
+        return internalRelations.contains(relation);
     }
 
     private ColumnEdge edge(String target, String column, List<ColumnRef> sources,
@@ -796,6 +815,7 @@ final class ColumnLineageEngine {
                 .transform(transform)
                 .ordinal(ordinal)
                 .engine(engine)
+                .targetInternal(isInternal(target))
                 .build();
     }
 
