@@ -4,6 +4,15 @@ import { ink, layerColor } from './badges.js';
 
 export const NODE_CAP = 300;
 
+/**
+ * 标签的字体与"还能读"的下限。
+ *
+ * 画布文字跟着 zoom 缩放，所以小容器里必须先保住字号，而不是保住整图：
+ * 整图看得见但字读不出，等于没有图。
+ */
+const NODE_FONT_PX = 11;
+const MIN_LABEL_PX = 10;
+
 export function create(el) {
   return window.cytoscape({
     container: el,
@@ -15,7 +24,8 @@ export function create(el) {
         selector: 'node',
         style: {
           shape: 'round-rectangle',
-          'font-size': '11px',
+          label: 'data(label)',
+          'font-size': `${NODE_FONT_PX}px`,
           'font-family': 'Cascadia Mono, Consolas, monospace',
           'font-weight': 500,
           color: ink.nodeText,
@@ -227,16 +237,68 @@ export function replace(cy, elements) {
   cy.elements().remove();
   cy.add(elements);
   cy.nodes().forEach((node) => {
+    // 宽度必须按"真正画出来的那个串"算：标签样式表取的就是 data(label)，
+    // 按短名算宽度却画全名（字段视图两边差的正是表前缀），字就溢出色块压到邻居身上。
     const label = node.data('label') || node.data('id');
     node.style('width', Math.min(190, 12 + label.length * 6.4));
     node.style('height', node.data('kind') === 'column' ? 24 : 34);
   });
 }
 
+/**
+ * 装得下就整图铺满，装不下就先把字保住。
+ *
+ * 语料实测：中间栏 516x192 时整图 fit 完只剩 0.372 倍，11px 的标签被压成 4px——
+ * 节点点得中、右栏也出得来表信息，但图上读不出字，用户看到的就是"没有字"。
+ * 于是低于可读下限时改为放大到下限并左上对齐：链路起点先入眼，
+ * 超出容器的部分交给拖动画布（minZoom 仍允许用户自己缩回去看整体形状）。
+ */
 export function fit(cy) {
-  if (cy.nodes().length) {
-    cy.fit(undefined, 24);
+  const nodes = cy.nodes();
+  if (!nodes.length) {
+    return { zoom: cy.zoom(), cramped: false, warning: '' };
   }
+  /* cytoscape 把容器尺寸缓存在自己手里，DOM 变了它不认（实测画布从 500x300 改成 700x400，
+     cy.width() 照旧报 500x300，只有显式 resize() 才刷新）。fit 读的就是这个缓存，
+     所以每次 framing 前自己去刷一遍——否则缩放和"装不下"的结论都是对着旧盒子算出来的。 */
+  cy.resize();
+  cy.fit(undefined, FIT_PADDING);
+  const fontPx = parseFloat(nodes[0].style('font-size')) || NODE_FONT_PX;
+  const floor = Math.max(cy.minZoom(), MIN_LABEL_PX / fontPx);
+  if (cy.zoom() >= floor) {
+    return { zoom: cy.zoom(), cramped: false, warning: '' };
+  }
+  cy.zoom(floor);
+  const box = cy.elements().boundingBox();
+  cy.pan({ x: FIT_PADDING - box.x1 * floor, y: FIT_PADDING - box.y1 * floor });
+  const canvas = `${Math.round(cy.width())}x${Math.round(cy.height())}`;
+  return {
+    zoom: floor,
+    cramped: true,
+    warning: `画布 ${canvas} 放不下 ${nodes.length} 个节点：已放大到 ${floor.toFixed(2)} 倍保住标签，`
+      + '整图请拖动画布或滚轮缩小',
+  };
+}
+
+/**
+ * 容器尺寸变了就重新 framing，并把可读性结论回灌给调用方。
+ *
+ * 实测过：首屏 fit 时画布 516x288，兄弟节点落位后只剩 516x272——缩放是对着旧盒子算的，
+ * "能不能放下整图"这个判断也就跟着偏。节点为空时不动（超限告警还挂在那儿，不能被抹掉）。
+ * 重新 fit 之前由 fit() 自己刷 cytoscape 的容器尺寸缓存，这里不额外插手。
+ */
+export function watchResize(cy, onFrame) {
+  if (!window.ResizeObserver) {
+    return () => {};
+  }
+  const observer = new ResizeObserver(() => {
+    if (!cy.nodes().length) {
+      return;
+    }
+    onFrame(fit(cy).warning);
+  });
+  observer.observe(cy.container());
+  return () => observer.disconnect();
 }
 
 /**

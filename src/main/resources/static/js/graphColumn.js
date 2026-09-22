@@ -4,6 +4,9 @@ import { capNotice, fit, nodePaint, replace, runLayout } from './graph.js';
 /**
  * 字段级链路图：节点是 {@code table.column}，这就是"清晰展示字段来源"的那一屏。
  *
+ * 节点上只画列名、不画限定的 {@code table.column}：整表展开时每个节点都带同一个表前缀，
+ * 前缀吃掉的宽度正好把 fit 缩放压没。完整标识在右栏「字段标识」里给。
+ *
  * @param handlers.onColumn(columnId, table) 点列节点
  * @param handlers.onEdge(edgeData)          点边看证据
  */
@@ -13,7 +16,7 @@ export function drawColumns(cy, view, handlers) {
   const cap = capNotice(nodes.length);
   if (!cap.ok) {
     cy.elements().remove();
-    return { warning: cap.warning, nodeCount: nodes.length, edgeCount: edges.length };
+    return { warning: cap.warning, nodeCount: nodes.length };
   }
 
   replace(cy, [
@@ -56,9 +59,9 @@ export function drawColumns(cy, view, handlers) {
     edge.on('mouseout', () => edge.style('label', ''));
   });
   runLayout(cy);
-  fit(cy);
+  const fitted = fit(cy);
   bind(cy, handlers);
-  return { warning: '', nodeCount: cy.nodes().size(), edgeCount: cy.edges().size() };
+  return { warning: fitted.warning, nodeCount: cy.nodes().size() };
 }
 
 function bind(cy, handlers) {

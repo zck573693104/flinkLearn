@@ -32,7 +32,9 @@ export function parsedColumnsView(payload) {
     nodes: [...ids].map((id) => ({
       id,
       column: columnOf(id),
-      name: columnOf(id),
+      // name 一律是"所属表的短名"，跟 /api/graph/column 下发的一致：
+      // 字段节点上画的是裸列名，表名留给右栏与 hover，两边口径不同迟早画出 app_name.app_name
+      name: tableNode(payload, tableOf(id)).name,
       table: tableOf(id),
       layer: tableNode(payload, tableOf(id)).layer,
       local: false,

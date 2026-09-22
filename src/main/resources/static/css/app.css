@@ -426,24 +426,63 @@ input::placeholder { color: var(--dimmer); }
   pointer-events: none;
 }
 
+/* 图头不许换行：它一行长就抢走画布 16px，而 fit 是对着抢之前的盒子算的。
+   标题超出去省略号截断，全文挂在 title 上，hover 能看全。 */
 .graph-head {
   display: flex;
   justify-content: space-between;
   gap: 10px;
   padding: 9px 12px 8px;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   border-bottom: 1px solid var(--line);
   background: #070b11;
 }
 
-.graph-title { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--txt); }
-.warn { color: var(--amber); font-size: 11.5px; }
+.graph-title {
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--txt);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-#graph {
+.graph-head .field { flex: 0 0 auto; }
+
+/* 叠在画布右下角：cramped 时图是左上对齐的，右下角是被裁掉的那一头，不压节点；
+   pointer-events 关掉，不抢拖动和点击。 */
+.warn {
+  position: absolute;
+  right: 9px;
+  bottom: 8px;
+  max-width: 70%;
+  z-index: 2;
+  pointer-events: none;
+  text-align: right;
+  color: var(--amber);
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 3px 7px;
+  border-right: 2px solid var(--amber);
+  background: rgba(5, 7, 12, .82);
+}
+
+/* 画布的包裹层：告警条叠在画布里，不参与布局。
+   放在外面的话它一出现就把画布压矮，而它讲的内容恰恰是"这个高度装不下"，
+   于是 fit 永远是对着旧高度算的——实测 516x288 算完、渲染成 501x202。 */
+.canvas {
+  position: relative;
   flex: 1;
   min-height: 0;
-  position: relative;
+}
+
+#graph {
+  position: absolute;
+  inset: 0;
   background-color: #060a10;
   /* 图上的坐标纸：节点排布本来就是分层的，网格把它讲出来 */
   background-image:
@@ -471,6 +510,13 @@ input::placeholder { color: var(--dimmer); }
   letter-spacing: .04em;
   color: var(--dim);
   flex-wrap: wrap;
+  /* 高度封顶两行（48px = 上下内边距 14 + 行高 15×2 + 行间距 4）。
+     字段图例有 8 个色块加一句说明，窄屏能换到四行，每多一行就从 #graph 身上拿走 15px：
+     实测中栏 380px 时被挤到只剩 501x132，图就不是给人看的了。超出的项纵向滚，不撑父栏。 */
+  flex: 0 0 auto;
+  max-height: 48px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -617,12 +663,16 @@ pre.sql mark.target { background: rgba(203, 242, 74, .2); color: #eaffa8; }
 
 @media (max-width: 900px) {
   /* 叠成单列时整页自己滚，但每栏都要拿到能看清的高度：
-     实测过 minmax(220px) 时中栏被 tabs/图例吃掉只剩 112px，等于没有图 */
+     实测过 minmax(220px) 时中栏被 tabs/图例吃掉只剩 112px，等于没有图。
+     这里再抬高一档是因为画布越矮，整图 fit 出来的缩放越小、标签越难读
+     （graph.js#fit 有可读字号下限兜底，但多给的高度能少拖几下画布）。 */
   .grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: minmax(300px, 46vh);
+    grid-auto-rows: minmax(380px, 62vh);
     overflow: auto;
   }
   .tools { margin-left: 0; }
   .stats { order: 3; width: 100%; }
+  /* 单列时每栏只有 380px 出头，图例只留一行，多出来的项纵向滚 */
+  .legend { max-height: 30px; }
 }

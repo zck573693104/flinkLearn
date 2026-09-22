@@ -75,7 +75,6 @@
     </nav>
     <div class="graph-head">
       <span id="graph-title" class="graph-title">全量血缘（未选表）</span>
-      <span id="graph-warn" class="warn" role="status"></span>
       <label class="field">方向
         <select id="direction">
           <option value="both">双向</option>
@@ -84,7 +83,11 @@
         </select>
       </label>
     </div>
-    <div id="graph"></div>
+    <div class="canvas">
+      <div id="graph"></div>
+      <!-- 告警写在画布外面就会改变画布高度，而 fit 的结论正是"这个高度装不下"：只能叠在画布上 -->
+      <span id="graph-warn" class="warn" role="status"></span>
+    </div>
     <div id="legend" class="legend"></div>
   </section>
 

@@ -5,7 +5,7 @@
  * 只负责"点了一下之后该重新取哪个接口、右栏显示什么"。
  */
 import { api } from './api.js';
-import { create, fit, setHot } from './graph.js';
+import { create, setHot, watchResize } from './graph.js';
 import { drawColumns } from './graphColumn.js';
 import { drawTable } from './graphTable.js';
 import {
@@ -67,6 +67,9 @@ const state = {
 };
 
 const cy = create(ui.graph);
+watchResize(cy, (note) => {
+  ui.warn.textContent = note;
+});
 
 function fail(error) {
   console.error(error);
@@ -298,52 +301,61 @@ function maxLayerOf(view) {
   return (view.nodes || []).reduce((max, node) => Math.max(max, node.layer || 0), 0);
 }
 
+/** 标题一行放不下就省略号截断，全文同时挂到 title 上，hover 能看回来 */
+function setGraphTitle(text) {
+  ui.title.textContent = text;
+  ui.title.title = text;
+}
+
 async function drawTableGraph() {
   const view = await api.tableGraph({ root: state.table, direction: direction(), depth: depth() });
   state.payload = view;
+  // 图例和标题都在画图之前落 DOM：它们是 #graph 的兄弟节点，晚写一步就把画布压矮，
+  // 而 fit 是按当时的容器尺寸算缩放的——实测过 fit 完 516x288、图例渲染后只剩 501x202。
+  setGraphTitle(state.table
+    ? `表级链路：${state.table}（${ui.direction.options[ui.direction.selectedIndex].text}，深度 ${ui.depth.value}）`
+    : `全量表级 DAG（${(view.nodes || []).length} 表 / ${(view.edges || []).length} 边）`);
+  drawLegend('table', state.maxLayer);
   const result = drawTable(cy, view, {
     onTable: guard(selectTable),
     onTableEdge: guard((data) => renderTableEdge(ui.detail, data)),
     onBlank: guard(resetSelection),
   });
+  // 有节点就以"最后一次 framing"为准；一个都没画（超上限）时只剩超限告警可报。
   ui.warn.textContent = result.warning;
-  ui.title.textContent = state.table
-    ? `表级链路：${state.table}（${ui.direction.options[ui.direction.selectedIndex].text}，深度 ${ui.depth.value}）`
-    : `全量表级 DAG（${result.nodeCount} 表 / ${result.edgeCount} 边）`;
   setHot(cy, state.table);
-  drawLegend('table', state.maxLayer);
 }
 
 /** 临时解析视图：数据只来自最近一次 /api/parse，全程不再打快照端点 */
 async function drawParsedTable() {
   const view = state.parse.graph;
   state.payload = view;
+  setGraphTitle(`试解析·表级（未入快照，${(view.nodes || []).length} 表 / ${(view.edges || []).length} 边）`);
+  drawLegend('table', maxLayerOf(view), '这张图来自输入框里的 SQL，重扫目录或换表即失效');
   const result = drawTable(cy, view, {
     onTable: guard(showParsedTable),
     onTableEdge: guard((data) => renderTableEdge(ui.detail, data)),
     onBlank: guard(() => renderEmpty(ui.detail, '临时解析视图：点表节点看它在这次解析里的字段清单。')),
   });
   ui.warn.textContent = result.warning;
-  ui.title.textContent = `试解析·表级（未入快照，${result.nodeCount} 表 / ${result.edgeCount} 边）`;
-  drawLegend('table', maxLayerOf(view), '这张图来自输入框里的 SQL，重扫目录或换表即失效');
 }
 
 async function drawParsedColumns() {
   const view = parsedColumnsView(state.parse);
   state.payload = view;
+  setGraphTitle(`试解析·字段（未入快照，${(view.nodes || []).length} 节点 / ${(view.edges || []).length} 边）`);
+  drawLegend('column', maxLayerOf(view), '链路里出现的中间关系仍折在边的 hops 里，点边看逐跳');
   const result = drawColumns(cy, view, {
     onColumn: guard((id) => openParsedColumn(id)),
     onEdge: guard((data) => showParsedEdge(data.source, data.target)),
   });
   ui.warn.textContent = result.warning;
-  ui.title.textContent = `试解析·字段（未入快照，${result.nodeCount} 节点 / ${result.edgeCount} 边）`;
-  drawLegend('column', maxLayerOf(view), '链路里出现的中间关系仍折在边的 hops 里，点边看逐跳');
 }
 
 async function drawColumnGraph() {
   if (!state.table) {
     ui.warn.textContent = '';
-    ui.title.textContent = '先选一张表再看字段链路';
+    setGraphTitle('先选一张表再看字段链路');
     cy.elements().remove();
     drawLegend('column', state.maxLayer);
     return;
@@ -354,14 +366,14 @@ async function drawColumnGraph() {
     depth: depth(),
   });
   state.payload = view;
+  setGraphTitle(`${state.column || `${state.table} 全部字段`} 的字段链路（${(view.nodes || []).length} 节点 / ${(view.edges || []).length} 边）`);
+  drawLegend('column', state.maxLayer);
   const result = drawColumns(cy, view, {
     onColumn: guard((id, table) => selectColumn(id, table)),
     onEdge: guard((data) => showEdge(data.source, data.target)),
   });
   ui.warn.textContent = result.warning;
-  ui.title.textContent = `${state.column || `${state.table} 全部字段`} 的字段链路（${result.nodeCount} 节点 / ${result.edgeCount} 边）`;
   setHot(cy, state.column);
-  drawLegend('column', state.maxLayer);
 }
 
 function drawLegend(kind, maxLayer, extraNote) {
@@ -706,5 +718,4 @@ window.addEventListener('hashchange', guard(async () => {
   }
   await refresh();
   await markActiveRow();
-  fit(cy);
 }().catch(fail));

@@ -11,7 +11,7 @@ export function drawTable(cy, view, handlers) {
   const cap = capNotice(nodes.length);
   if (!cap.ok) {
     cy.elements().remove();
-    return { warning: cap.warning, nodeCount: nodes.length, edgeCount: edges.length };
+    return { warning: cap.warning, nodeCount: nodes.length };
   }
 
   replace(cy, [
@@ -37,9 +37,9 @@ export function drawTable(cy, view, handlers) {
     node.style('text-max-width', '170px');
   });
   runLayout(cy);
-  fit(cy);
+  const fitted = fit(cy);
   bind(cy, handlers);
-  return { warning: '', nodeCount: cy.nodes().size(), edgeCount: cy.edges().size() };
+  return { warning: fitted.warning, nodeCount: cy.nodes().size() };
 }
 
 function bind(cy, handlers) {
