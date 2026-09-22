@@ -27,7 +27,7 @@ export function create(el) {
           'text-wrap': 'ellipsis',
           'text-max-width': '150px',
           'background-opacity': 1,
-          'border-color': '#33475d',
+          'border-color': ink.nodeLine,
           'border-width': 1,
         },
       },
@@ -42,7 +42,7 @@ export function create(el) {
           'font-size': '9.5px',
           'font-family': 'Cascadia Mono, Consolas, monospace',
           color: ink.localText,
-          'text-background-color': '#05070c',
+          'text-background-color': ink.canvasBg,
           'text-background-opacity': 0.85,
           'text-background-padding': '2px',
           label: '',
@@ -50,7 +50,6 @@ export function create(el) {
       },
       /* 选中态不在这里：Cytoscape 的直接样式压过样式表，节点底色/描边是 nodePaint() 逐个写的，
          所以 .hot 写成样式表规则根本不会生效——高亮也必须走同一条直接样式路径，见 setHot()。 */
-      { selector: '.faded', style: { opacity: 0.16 } },
     ],
   });
 }

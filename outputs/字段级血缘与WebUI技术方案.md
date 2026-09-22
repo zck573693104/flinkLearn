@@ -594,6 +594,8 @@ src/main/resources/static/
 
 另一条踩过的坑值得留下：cytoscape **3.32.1 没有 `shadow-*`**，写了会在控制台按节点数刷出 68 条 `The style property 'shadow-blur' is invalid`。暗底"浮起来"的效果要用受支持的 `overlay-*`/`border` 实现。
 
+**同轮收尾回归又扫掉三类残留**（都不影响功能，但会慢慢烂回去）：`graph.js` 样式表里两个硬编码色值绕开了调色板（`#33475d` 根本没有对应变量、`#05070c` 与 `--ink-0` 重复）→ 补 `--node-line` 并改用 `ink.nodeLine`/`ink.canvasBg`；`ink.arrow`、`FALLBACK.faded`、`confidenceClass()` 与样式表里的 `.faded` 规则全是零引用死代码 → 删（置信度分档早就不在前端重新推断，§8.2 口径一致）。核对方式：把 7 个 js 源文件在页面里抓出来，正则提取所有 `getElementById`/`querySelector` 的 id 逐个查 DOM——24 个引用全命中，无悬空接线。
+
 窄视口（本轮唯一改动是新增顶栏状态条导致挤高）：`.grid` 的 `grid-auto-rows` 先按 `minmax(220px, auto)` 写，实测 `#graph` 被 tabs/图例挤到 **516x112**——等于没有图；改 `minmax(300px, 46vh)` + 单列时整页 `overflow:auto`，复测三行 `300px 300px 300px`、`#graph` 516x192。
 
 **验收方法记下来，下轮不必重新摸索**：in-app Browser 表面处于 `visibilityState=hidden` 时 `take_screenshot` 直接拒（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`），且 rAF 被冻结——`getImageData` 读实时画布全 0，那不是"渲染坏了"。可行的像素取证路径是：用页面自己的 `create()`/`drawTable()`/`drawColumns()` 把一个容器渲染到屏外（`position:fixed;left:-3000px`，给到宽高即可），再取 `cy.png()`（**同步绘制**，不受 rAF 影响）→ `fetch(dataURI).blob()` → **`createImageBitmap`**。注意别用 `new Image().decode()`：隐藏页里它不 resolve，会把整段脚本拖到 15s 超时。

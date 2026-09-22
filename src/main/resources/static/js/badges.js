@@ -28,11 +28,11 @@ const FALLBACK = {
   edgeStar: '#ff9a5a',
   edgeUnresolved: '#ff5d6c',
   edgeDefault: '#38506b',
+  nodeLine: '#33475d',
   localFill: '#111a25',
   localLine: '#5b7691',
   localText: '#9db2c8',
   hot: '#cbf24a',
-  faded: '#7e93a8',
 };
 
 function token(name, fallback) {
@@ -45,12 +45,12 @@ const LAYER_COLORS = FALLBACK.layers.map((color, index) =>
 
 export const ink = {
   nodeText: token('--node-ink', FALLBACK.nodeInk),
+  nodeLine: token('--node-line', FALLBACK.nodeLine),
   localFill: token('--local-fill', FALLBACK.localFill),
   localLine: token('--local-line', FALLBACK.localLine),
   localText: token('--local-text', FALLBACK.localText),
   hot: token('--acid', FALLBACK.hot),
   edgeDefault: token('--edge-default', FALLBACK.edgeDefault),
-  arrow: token('--edge-default', FALLBACK.edgeDefault),
   /** 导出 PNG 的底色要跟屏上看的一致，不能再给一张白纸 */
   canvasBg: token('--ink-0', '#05070c'),
 };
@@ -97,10 +97,4 @@ export function confidenceText(derivation, confidence) {
 export function layerColor(layer) {
   const index = Number.isFinite(layer) ? Math.max(0, Math.round(layer)) : 0;
   return LAYER_COLORS[index % LAYER_COLORS.length];
-}
-
-export function confidenceClass(confidence) {
-  if (confidence >= 0.9) return 'high';
-  if (confidence >= 0.7) return 'mid';
-  return 'low';
 }
