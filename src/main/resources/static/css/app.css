@@ -53,6 +53,13 @@
   --local-line: #5b7691;
   --local-text: #9db2c8;
 
+  /* 字段视图的"表盒 + 列行"：盒子是暗底的容器（表名写在标题条上），
+     列行是盒子里的一行行槽位，边连槽位而不是连盒子。 */
+  --box-fill: #080d15;
+  --row-fill: #141e2b;
+  --row-line: #26364a;
+  --row-text: #dbe7f4;
+
   --font-display: "Bahnschrift SemiBold Condensed", "Bahnschrift Condensed",
     "Bahnschrift", "DIN Alternate", "Microsoft YaHei", sans-serif;
   --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
@@ -469,6 +476,11 @@ input::placeholder { color: var(--dimmer); }
   padding: 3px 7px;
   border-right: 2px solid var(--amber);
   background: rgba(5, 7, 12, .82);
+}
+
+/* 没有话要说的时候别留一道琥珀色细条在画布角上 */
+.warn:empty {
+  display: none;
 }
 
 /* 画布的包裹层：告警条叠在画布里，不参与布局。

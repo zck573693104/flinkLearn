@@ -11,7 +11,7 @@ export function drawTable(cy, view, handlers) {
   const cap = capNotice(nodes.length);
   if (!cap.ok) {
     cy.elements().remove();
-    return { warning: cap.warning, nodeCount: nodes.length };
+    return { framing: '', modelWarning: cap.warning, nodeCount: nodes.length };
   }
 
   replace(cy, [
@@ -39,7 +39,7 @@ export function drawTable(cy, view, handlers) {
   runLayout(cy);
   const fitted = fit(cy);
   bind(cy, handlers);
-  return { warning: fitted.warning, nodeCount: cy.nodes().size() };
+  return { framing: fitted.warning, modelWarning: '', nodeCount: cy.nodes().size() };
 }
 
 function bind(cy, handlers) {

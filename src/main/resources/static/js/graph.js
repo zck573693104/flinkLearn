@@ -13,6 +13,28 @@ export const NODE_CAP = 300;
 const NODE_FONT_PX = 11;
 const MIN_LABEL_PX = 10;
 
+/**
+ * 字段视图的"表盒 + 列行"尺寸。
+ *
+ * 盒子不是 cytoscape 的 compound 父节点：它的宽高由行数算出来直接写进样式，
+ * 列行是同层级的普通节点、由 stackRows() 摆进盒子里。自算布局本来就掌握全部坐标，
+ * 用 compound 反而要把坐标换成"相对父节点"的口径，还要跟父框自动外扩较劲。
+ *
+ * 表名也不写在盒子上：写在盒子上的字要么压住第一行列行，要么靠 text-margin-y 猜位置。
+ * 改成盒子顶部一条实色"标题行"节点，色块自己就是分隔线。
+ */
+export const BOX_W = 178;
+/** 行距（pitch）：比行色块高，多出来的缝让相邻两行不至于糊成一片 */
+export const ROW_H = 20;
+export const ROW_BOX_H = 17;
+export const HEADER_H = 24;
+export const BOX_PAD = 8;
+export const ROW_W = BOX_W - 14;
+export const HEADER_W = BOX_W - 6;
+
+/** 画盒子/行的那套 kind，其余（表级图）走通用外观 */
+const BOX_KINDS = '[kind="tableBox"], [kind="hopBox"]';
+
 export function create(el) {
   return window.cytoscape({
     container: el,
@@ -36,6 +58,41 @@ export function create(el) {
           'background-opacity': 1,
           'border-color': ink.nodeLine,
           'border-width': 1,
+          'z-index': 2,
+        },
+      },
+      /* 盒子垫底、线走在中间、行浮在上面：边的端点被 cytoscape 裁到节点边界，
+         所以线只会在盒体上走明路，不会被色块盖掉半截。 */
+      {
+        selector: BOX_KINDS,
+        style: {
+          label: '',
+          'background-opacity': 1,
+          'overlay-opacity': 0,
+          'z-index': 0,
+        },
+      },
+      {
+        selector: 'node[kind="headerRow"]',
+        style: {
+          shape: 'rectangle',
+          'font-weight': 700,
+          'text-wrap': 'ellipsis',
+          'text-max-width': `${HEADER_W - 10}px`,
+          'background-opacity': 1,
+          'overlay-opacity': 0,
+          'z-index': 3,
+        },
+      },
+      {
+        selector: 'node[kind="columnRow"]',
+        style: {
+          shape: 'rectangle',
+          'text-wrap': 'ellipsis',
+          'text-max-width': `${ROW_W - 8}px`,
+          'background-opacity': 1,
+          'overlay-opacity': 0,
+          'z-index': 2,
         },
       },
       {
@@ -53,6 +110,7 @@ export function create(el) {
           'text-background-opacity': 0.85,
           'text-background-padding': '2px',
           label: '',
+          'z-index': 1,
         },
       },
       /* 选中态不在这里：Cytoscape 的直接样式压过样式表，节点底色/描边是 nodePaint() 逐个写的，
@@ -65,12 +123,52 @@ export function create(el) {
  * 节点的基础外观：表级图和字段级图共用一份，避免两种图各写一遍颜色口径。
  *
  * 物理节点按层号取色、语句内中间关系压成暗底虚线框，都走直接样式；
+ * 盒/行/标题行各有各的口径，但层号取色这件事只有"实体"节点参与——
+ * 盒体永远是最暗的容器，层号写在标题行上，这样图例的第几层仍然读得出来。
  * 这里把 overlay 显式关掉，是给 setHot() 留出的可视余量。
  */
 export function nodePaint(node) {
+  const kind = node.data('kind');
   const local = !!node.data('local');
+  const layer = layerColor(node.data('layer'));
+  if (kind === 'tableBox' || kind === 'hopBox') {
+    node.style({
+      'background-color': ink.boxFill,
+      'border-style': kind === 'hopBox' || local ? 'dashed' : 'solid',
+      'border-color': kind === 'hopBox' || local ? ink.localLine : layer,
+      'border-opacity': 1,
+      'border-width': 1.5,
+      'overlay-opacity': 0,
+    });
+    return;
+  }
+  if (kind === 'headerRow') {
+    node.style({
+      'background-color': local ? ink.localFill : layer,
+      color: local ? ink.localText : ink.nodeText,
+      'border-style': local ? 'dashed' : 'solid',
+      'border-color': local ? ink.localLine : layer,
+      'border-opacity': 1,
+      'border-width': 1,
+      'overlay-opacity': 0,
+    });
+    return;
+  }
+  if (kind === 'columnRow') {
+    const note = !!node.data('capped');
+    node.style({
+      'background-color': note ? ink.boxFill : ink.rowFill,
+      color: note ? ink.localText : ink.rowText,
+      'border-width': note ? 0 : 1,
+      'border-style': 'solid',
+      'border-color': ink.rowLine,
+      'border-opacity': 1,
+      'overlay-opacity': 0,
+    });
+    return;
+  }
   node.style({
-    'background-color': local ? ink.localFill : layerColor(node.data('layer')),
+    'background-color': local ? ink.localFill : layer,
     color: local ? ink.localText : ink.nodeText,
     'border-style': local ? 'dashed' : 'solid',
     'border-color': local ? ink.localLine : ink.nodeText,
@@ -118,11 +216,11 @@ function num(value) {
   return parseFloat(value) || 0;
 }
 
-/** 按服务端下发的 layer 分列：层号缺失一律按第 0 层处理 */
+/** 按 layer 分列：层号缺失一律按第 0 层，非整数层（中间跳占位）自成一列 */
 function groupByLayer(nodes) {
   const columns = new Map();
   nodes.forEach((node) => {
-    const layer = Number.isInteger(node.data('layer')) ? node.data('layer') : 0;
+    const layer = Number.isFinite(node.data('layer')) ? node.data('layer') : 0;
     if (!columns.has(layer)) {
       columns.set(layer, []);
     }
@@ -134,8 +232,11 @@ function groupByLayer(nodes) {
 /**
  * 同层内的行序：按"已排定的前一层邻居"的平均行号排（重心法一趟）。
  * 前一层没排过的节点（链路起点、孤岛、同层入边）留在原位，不打乱已有顺序。
+ *
+ * peers 是盒子视图给的"上游盒"表：字段视图的边连的是行，盒与盒之间没有边，
+ * 直接走 incomers() 会把行当成邻居、把盒当成孤岛，重心全丢。
  */
-function orderWithinColumns(columns) {
+function orderWithinColumns(columns, peers) {
   const row = new Map();
   columns.forEach((group, index) => {
     const ranked = group
@@ -143,9 +244,10 @@ function orderWithinColumns(columns) {
         if (index === 0) {
           return { node, key: position };
         }
-        const before = node.incomers('node')
-          .filter((prev) => row.has(prev.id()))
-          .map((prev) => row.get(prev.id()));
+        const sources = peers
+          ? [...(peers.get(node.id()) || [])]
+          : node.incomers('node').map((prev) => prev.id());
+        const before = sources.filter((id) => row.has(id)).map((id) => row.get(id));
         return {
           node,
           key: before.length ? before.reduce((a, b) => a + b, 0) / before.length : position,
@@ -154,6 +256,54 @@ function orderWithinColumns(columns) {
       .sort((a, b) => a.key - b.key);
     ranked.forEach((entry, position) => row.set(entry.node.id(), position));
     group.splice(0, group.length, ...ranked.map((entry) => entry.node));
+  });
+}
+
+/** 行级边折算成盒级邻接：重心法要的是"我这盒的上游有哪些盒" */
+function boxPeers(cy) {
+  const owner = new Map();
+  cy.nodes('[kind="columnRow"], [kind="headerRow"]').forEach((node) => {
+    owner.set(node.id(), node.data('box'));
+  });
+  const upstream = new Map();
+  cy.edges().forEach((edge) => {
+    const from = owner.get(edge.data('source'));
+    const to = owner.get(edge.data('target'));
+    if (!from || !to || from === to) {
+      return;
+    }
+    if (!upstream.has(to)) {
+      upstream.set(to, new Set());
+    }
+    upstream.get(to).add(from);
+  });
+  return upstream;
+}
+
+/** 盒子落位后把标题行和列行填进去：行坐标由盒子的左上角推，不指望布局顺手摆 */
+function stackRows(cy) {
+  const byBox = new Map();
+  const push = (node) => {
+    const id = node.data('box');
+    if (!byBox.has(id)) {
+      byBox.set(id, []);
+    }
+    byBox.get(id).push(node);
+  };
+  cy.nodes('[kind="headerRow"]').forEach(push);
+  cy.nodes('[kind="columnRow"]').forEach(push);
+  cy.nodes(BOX_KINDS).forEach((box) => {
+    const members = byBox.get(box.id()) || [];
+    const top = box.position('y') - num(box.style('height')) / 2;
+    members
+      .sort((a, b) => num(a.data('order')) - num(b.data('order')))
+      .forEach((node) => {
+        const band = node.data('kind') === 'headerRow'
+          ? top + HEADER_H / 2
+          : top + HEADER_H + (num(node.data('order')) - 1) * ROW_H + ROW_BOX_H / 2;
+        node.position('x', box.position('x'));
+        node.position('y', band);
+      });
   });
 }
 
@@ -213,13 +363,17 @@ function place(columns, direction) {
  * fit 到中间栏只剩 0.39 缩放，字号 4px、线宽 0.6px——数据全对但看上去"没有图"；
  * 而且下游节点会排到上游左边，跟"第几层"图例直接矛盾。层号本来就是这套图的语义。
  * 朝向按容器实际尺寸挑：谁的 fit 缩放大就用谁，避免长条图被压成一条线。
+ *
+ * 字段视图排的是盒子（一表一盒），行列由 stackRows() 填进各自盒子里；
+ * 没有盒子时（表级图）排的就是节点本身。
  */
 export function runLayout(cy) {
-  const columns = groupByLayer(cy.nodes());
+  const boxes = cy.nodes(BOX_KINDS);
+  const columns = groupByLayer(boxes.length ? boxes : cy.nodes());
   if (!columns.length) {
     return;
   }
-  orderWithinColumns(columns);
+  orderWithinColumns(columns, boxes.length ? boxPeers(cy) : null);
   const container = { w: cy.width(), h: cy.height() };
   const zoomOf = (direction) => {
     const box = measure(columns, direction);
@@ -231,17 +385,36 @@ export function runLayout(cy) {
   const horizontal = zoomOf('LR');
   const vertical = zoomOf('TB');
   place(columns, Number.isFinite(vertical) && vertical > horizontal ? 'TB' : 'LR');
+  if (boxes.length) {
+    stackRows(cy);
+  }
 }
 
 export function replace(cy, elements) {
   cy.elements().remove();
   cy.add(elements);
   cy.nodes().forEach((node) => {
+    const kind = node.data('kind');
+    if (kind === 'tableBox' || kind === 'hopBox') {
+      node.style({
+        width: BOX_W,
+        height: HEADER_H + (node.data('rows') || 0) * ROW_H + BOX_PAD,
+      });
+      return;
+    }
+    if (kind === 'headerRow') {
+      node.style({ width: HEADER_W, height: HEADER_H - 4 });
+      return;
+    }
+    if (kind === 'columnRow') {
+      node.style({ width: ROW_W, height: ROW_BOX_H });
+      return;
+    }
     // 宽度必须按"真正画出来的那个串"算：标签样式表取的就是 data(label)，
     // 按短名算宽度却画全名（字段视图两边差的正是表前缀），字就溢出色块压到邻居身上。
     const label = node.data('label') || node.data('id');
     node.style('width', Math.min(190, 12 + label.length * 6.4));
-    node.style('height', node.data('kind') === 'column' ? 24 : 34);
+    node.style('height', kind === 'column' ? 24 : 34);
   });
 }
 
@@ -263,7 +436,17 @@ export function fit(cy) {
      所以每次 framing 前自己去刷一遍——否则缩放和"装不下"的结论都是对着旧盒子算出来的。 */
   cy.resize();
   cy.fit(undefined, FIT_PADDING);
-  const fontPx = parseFloat(nodes[0].style('font-size')) || NODE_FONT_PX;
+  /* 可读下限按"最小的那个有字的节点"算：字段视图里盒子不写字，拿 nodes[0]（通常是盒子）
+     来定字号等于用空气做基准。 */
+  let fontPx = Infinity;
+  nodes.forEach((node) => {
+    if (node.data('label')) {
+      fontPx = Math.min(fontPx, parseFloat(node.style('font-size')) || NODE_FONT_PX);
+    }
+  });
+  if (!Number.isFinite(fontPx)) {
+    fontPx = NODE_FONT_PX;
+  }
   const floor = Math.max(cy.minZoom(), MIN_LABEL_PX / fontPx);
   if (cy.zoom() >= floor) {
     return { zoom: cy.zoom(), cramped: false, warning: '' };
@@ -272,10 +455,12 @@ export function fit(cy) {
   const box = cy.elements().boundingBox();
   cy.pan({ x: FIT_PADDING - box.x1 * floor, y: FIT_PADDING - box.y1 * floor });
   const canvas = `${Math.round(cy.width())}x${Math.round(cy.height())}`;
+  // 报"多少个"要报用户眼里的那个数：字段视图的盒体和空盒子不算信息量
+  const labeled = nodes.filter((node) => node.data('label')).length || nodes.length;
   return {
     zoom: floor,
     cramped: true,
-    warning: `画布 ${canvas} 放不下 ${nodes.length} 个节点：已放大到 ${floor.toFixed(2)} 倍保住标签，`
+    warning: `画布 ${canvas} 放不下 ${labeled} 个节点：已放大到 ${floor.toFixed(2)} 倍保住标签，`
       + '整图请拖动画布或滚轮缩小',
   };
 }
@@ -302,14 +487,17 @@ export function watchResize(cy, onFrame) {
 }
 
 /**
- * 节点数超上限时不去渲染上千个方块——语料里有单表 783 列的情况，
+ * 超上限时不去渲染上千个方块——语料里有单表 787 列的情况，
  * 全画出来浏览器直接卡住，而且用户也看不清。
+ *
+ * 数的是什么由调用方说：表级图数节点，字段级图数表盒（列已经收进盒子里了）。
+ * 报错误的单位必须和判断用的单位一致，否则"N 个"对不上用户看得见的东西。
  */
-export function capNotice(nodeCount) {
-  return nodeCount <= NODE_CAP
+export function capNotice(count, unit) {
+  return count <= NODE_CAP
     ? { ok: true, warning: '' }
     : {
       ok: false,
-      warning: `节点 ${nodeCount} 个，超过 ${NODE_CAP} 上限：请先选中具体表/字段或调小深度`,
+      warning: `${unit || '节点'} ${count} 个，超过 ${NODE_CAP} 上限：请先选中具体表/字段或调小深度`,
     };
 }

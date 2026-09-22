@@ -32,6 +32,10 @@ const FALLBACK = {
   localFill: '#111a25',
   localLine: '#5b7691',
   localText: '#9db2c8',
+  boxFill: '#080d15',
+  rowFill: '#141e2b',
+  rowLine: '#26364a',
+  rowText: '#dbe7f4',
   hot: '#cbf24a',
 };
 
@@ -49,6 +53,10 @@ export const ink = {
   localFill: token('--local-fill', FALLBACK.localFill),
   localLine: token('--local-line', FALLBACK.localLine),
   localText: token('--local-text', FALLBACK.localText),
+  boxFill: token('--box-fill', FALLBACK.boxFill),
+  rowFill: token('--row-fill', FALLBACK.rowFill),
+  rowLine: token('--row-line', FALLBACK.rowLine),
+  rowText: token('--row-text', FALLBACK.rowText),
   hot: token('--acid', FALLBACK.hot),
   edgeDefault: token('--edge-default', FALLBACK.edgeDefault),
   /** 导出 PNG 的底色要跟屏上看的一致，不能再给一张白纸 */

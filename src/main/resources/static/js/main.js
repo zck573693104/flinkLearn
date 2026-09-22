@@ -64,16 +64,44 @@ const state = {
   parse: null,
   /** 临时视图里选中的字段，切过去时用来直接填右栏 */
   parsedColumn: null,
+  /** 这一次画图本身要交代的退化说明（多少列没画、多少段链路没显示） */
+  modelWarning: '',
 };
 
 const cy = create(ui.graph);
-watchResize(cy, (note) => {
-  ui.warn.textContent = note;
-});
+
+/* 取数在 await 处会让出线程，慢的那次不能盖掉后点的：画之前比序号，过期就收手。 */
+let renderSeq = 0;
+
+/**
+ * 告警条由两半拼成：fit 的"画布放不下"每次重新 framing 都要重算，
+ * 图自己的"N 列未画"只在画图那一次产生。
+ *
+ * 两半必须分开存：以前 resize 回调直接整条覆盖，结果容器一变宽、
+ * fit 说"放得下了"，就把"1540 列未画"的交代一起抹成空条——
+ * 画布明明只画了 28 行，页面却一句话都不说。
+ */
+function showWarning(result) {
+  state.modelWarning = result.modelWarning || '';
+  paintFraming(result.framing);
+}
+
+/** 重新 framing：图本身的说明不变，只换"放放不下"那一半 */
+function paintFraming(framing) {
+  ui.warn.textContent = [framing, state.modelWarning].filter(Boolean).join('；');
+}
+
+/** 与图无关的一次性话（报错、重扫进度）：整条让给它，别和上一张图的说明混在一起 */
+function setWarn(text) {
+  state.modelWarning = '';
+  ui.warn.textContent = text || '';
+}
+
+watchResize(cy, paintFraming);
 
 function fail(error) {
   console.error(error);
-  ui.warn.textContent = error.message || String(error);
+  setWarn(error.message || String(error));
   renderError(ui.detail, error);
 }
 
@@ -307,8 +335,11 @@ function setGraphTitle(text) {
   ui.title.title = text;
 }
 
-async function drawTableGraph() {
+async function drawTableGraph(seq) {
   const view = await api.tableGraph({ root: state.table, direction: direction(), depth: depth() });
+  if (seq !== renderSeq) {
+    return;
+  }
   state.payload = view;
   // 图例和标题都在画图之前落 DOM：它们是 #graph 的兄弟节点，晚写一步就把画布压矮，
   // 而 fit 是按当时的容器尺寸算缩放的——实测过 fit 完 516x288、图例渲染后只剩 501x202。
@@ -322,7 +353,7 @@ async function drawTableGraph() {
     onBlank: guard(resetSelection),
   });
   // 有节点就以"最后一次 framing"为准；一个都没画（超上限）时只剩超限告警可报。
-  ui.warn.textContent = result.warning;
+  showWarning(result);
   setHot(cy, state.table);
 }
 
@@ -337,24 +368,26 @@ async function drawParsedTable() {
     onTableEdge: guard((data) => renderTableEdge(ui.detail, data)),
     onBlank: guard(() => renderEmpty(ui.detail, '临时解析视图：点表节点看它在这次解析里的字段清单。')),
   });
-  ui.warn.textContent = result.warning;
+  showWarning(result);
 }
 
 async function drawParsedColumns() {
   const view = parsedColumnsView(state.parse);
   state.payload = view;
   setGraphTitle(`试解析·字段（未入快照，${(view.nodes || []).length} 节点 / ${(view.edges || []).length} 边）`);
-  drawLegend('column', maxLayerOf(view), '链路里出现的中间关系仍折在边的 hops 里，点边看逐跳');
+  // 不再传 extraNote：中间跳已经显形成虚线盒了，"仍折在 hops 里"是句反话
+  drawLegend('column', maxLayerOf(view));
   const result = drawColumns(cy, view, {
     onColumn: guard((id) => openParsedColumn(id)),
-    onEdge: guard((data) => showParsedEdge(data.source, data.target)),
-  });
-  ui.warn.textContent = result.warning;
+    onBox: guard((table) => showParsedTable(table)),
+    onEdge: guard((data) => showParsedEdge(data.realFrom || data.source, data.realTo || data.target)),
+  }, { focus: state.parsedColumn });
+  showWarning(result);
 }
 
-async function drawColumnGraph() {
+async function drawColumnGraph(seq) {
   if (!state.table) {
-    ui.warn.textContent = '';
+    setWarn('');
     setGraphTitle('先选一张表再看字段链路');
     cy.elements().remove();
     drawLegend('column', state.maxLayer);
@@ -365,14 +398,18 @@ async function drawColumnGraph() {
     column: state.column ? columnNameOf(state.column, state.table) : '',
     depth: depth(),
   });
+  if (seq !== renderSeq) {
+    return;
+  }
   state.payload = view;
   setGraphTitle(`${state.column || `${state.table} 全部字段`} 的字段链路（${(view.nodes || []).length} 节点 / ${(view.edges || []).length} 边）`);
   drawLegend('column', state.maxLayer);
   const result = drawColumns(cy, view, {
     onColumn: guard((id, table) => selectColumn(id, table)),
-    onEdge: guard((data) => showEdge(data.source, data.target)),
-  });
-  ui.warn.textContent = result.warning;
+    onBox: guard((table) => selectTable(table)),
+    onEdge: guard((data) => showEdge(data.realFrom || data.source, data.realTo || data.target)),
+  }, { focus: state.column });
+  showWarning(result);
   setHot(cy, state.column);
 }
 
@@ -401,8 +438,10 @@ function drawLegend(kind, maxLayer, extraNote) {
     Object.keys(EDGE_STYLE).forEach((derivation) =>
       swatch(EDGE_STYLE[derivation]['line-color'],
         `${derivation} ${derivationLabel(derivation)}`));
+    note('一表一盒、一行一字段，线连字段行不连盒子；盒顶色带就是该表所在的层');
+    note('点字段行=只画这一列的通路（含中间跳），点盒顶表名=以那张表为中心展开');
     note('点线=按名字没对上（UNNAMED/STAR），虚线=需要人工确认（CONSTANT/UNRESOLVED）');
-    note('灰底虚线框 = 语句内中间关系（CTE/子查询），已折进边的 hops');
+    note('虚线暗盒 = 语句内中间关系（CTE/子查询/UNNEST），由边的 hops 显形，一段段仍属同一条边');
   }
   if (extraNote) {
     note(extraNote);
@@ -413,6 +452,7 @@ function drawLegend(kind, maxLayer, extraNote) {
 
 /** 按选区重画中栏 + 填右栏：换视图、换深度、点节点、启动都只走这一条路径 */
 async function refresh() {
+  const seq = ++renderSeq;
   if (state.view === 'parsed-table' || state.view === 'parsed-column') {
     // 没解析过就被点到了（手工换 hash、解析失败后残留）：退回快照视图，别画空图
     if (!state.parse) {
@@ -420,6 +460,7 @@ async function refresh() {
       await refresh();
       return;
     }
+    /* 试解析的三条路径都不打后端，同步画完，不会有别的意图插在中间 */
     if (state.view === 'parsed-table') {
       await drawParsedTable();
       renderEmpty(ui.detail, '临时解析视图：点表节点看它在这次解析里的字段清单，点表级边看它出自哪条语句。');
@@ -434,14 +475,17 @@ async function refresh() {
     return;
   }
   if (state.view === 'table') {
-    await drawTableGraph();
+    await drawTableGraph(seq);
   } else {
-    await drawColumnGraph();
+    await drawColumnGraph(seq);
+  }
+  if (seq !== renderSeq) {
+    return;
   }
   if (state.column) {
-    await showColumnDetail(state.column, state.table);
+    await showColumnDetail(state.column, state.table, seq);
   } else if (state.table) {
-    await showTableDetail(state.table);
+    await showTableDetail(state.table, seq);
   } else {
     renderEmpty(ui.detail, state.view === 'column'
       ? '先在表级视图点一张表，再进字段链路'
@@ -449,8 +493,11 @@ async function refresh() {
   }
 }
 
-async function showTableDetail(tableId) {
+async function showTableDetail(tableId, seq) {
   const data = await api.columns(tableId);
+  if (seq !== renderSeq) {
+    return;
+  }
   state.columns = data;
   renderTable(ui.detail, data, {
     onColumn: (column) => openColumnView(data.table, column.id),
@@ -458,10 +505,13 @@ async function showTableDetail(tableId) {
   });
 }
 
-async function showColumnDetail(columnId, table) {
+async function showColumnDetail(columnId, table, seq) {
   const owner = state.columns && state.columns.table === table
     ? state.columns
     : await api.columns(table);
+  if (seq !== renderSeq) {
+    return;
+  }
   state.columns = owner;
   const column = (owner.columns || []).find((row) => row.id === columnId);
   if (column) {
@@ -586,7 +636,7 @@ function download(name, href) {
 
 function exportPng() {
   if (!cy.nodes().length) {
-    ui.warn.textContent = '当前没有可导出的图';
+    setWarn('当前没有可导出的图');
     return;
   }
   download(`lineage-${state.view}-${Date.now()}.png`,
@@ -595,7 +645,7 @@ function exportPng() {
 
 function exportJson() {
   if (!state.payload) {
-    ui.warn.textContent = '当前没有可导出的子图';
+    setWarn('当前没有可导出的子图');
     return;
   }
   const blob = new Blob([JSON.stringify({
@@ -673,12 +723,13 @@ ui.onlyUnresolved.addEventListener('change', guard(loadTables));
 ui.depth.addEventListener('change', guard(refresh));
 ui.direction.addEventListener('change', guard(() => {
   if (state.view === 'table') {
-    drawTableGraph();
+    /* 只重画中栏，不动右栏：换个方向不该把已选字段的证据面板刷掉，所以不走 refresh */
+    drawTableGraph(++renderSeq);
   }
 }));
 document.getElementById('rescan').addEventListener('click', guard(async () => {
   const dir = ui.scanDir.value.trim();
-  ui.warn.textContent = `正在重扫${dir || '当前'}目录…`;
+  setWarn(`正在重扫${dir || '当前'}目录…`);
   const data = await api.scan(dir);
   state.table = null;
   state.column = null;
@@ -692,7 +743,6 @@ document.getElementById('rescan').addEventListener('click', guard(async () => {
   await loadOverview();
   await loadTables();
   await refresh();
-  ui.warn.textContent = '';
   renderEmpty(ui.detail, `重扫完成：${data.source} → ${data.fileCount} 文件 / `
     + `${data.statementCount} 条语句 / ${data.columnEdgeCount} 条字段边，用时 ${data.durationMillis}ms`);
 }));
