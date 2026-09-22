@@ -5,10 +5,10 @@
  * 只负责"点了一下之后该重新取哪个接口、右栏显示什么"。
  */
 import { api } from './api.js';
-import { create, fit } from './graph.js';
-import { drawColumns, markColumn } from './graphColumn.js';
+import { create, fit, setHot } from './graph.js';
+import { drawColumns } from './graphColumn.js';
 import { drawTable } from './graphTable.js';
-import { layerColor } from './badges.js';
+import { EDGE_STYLE, derivationLabel, ink, layerColor } from './badges.js';
 import {
   renderColumn,
   renderEdge,
@@ -38,6 +38,8 @@ const ui = {
   legend: document.getElementById('legend'),
   scanError: document.getElementById('scan-error'),
   scanDir: document.getElementById('scan-dir'),
+  status: document.getElementById('status'),
+  mark: document.querySelector('.brand .mark'),
 };
 
 const state = {
@@ -85,6 +87,7 @@ async function loadOverview() {
   const data = await api.overview();
   state.maxLayer = data.maxLayer;
   ui.overview.textContent = '';
+  const dirty = data.parseErrorCount + data.unresolvedCount + data.starCount;
   [
     ['语料', `${data.fileCount} 文件 / ${data.statementCount} 语句`],
     ['表', `${data.tableCount}（${data.tableCountWithColumns} 张有字段）`],
@@ -92,10 +95,15 @@ async function loadOverview() {
     ['表边', data.tableEdgeCount],
     ['层级', data.maxLayer],
     ['中间关系', data.localRelationCount],
-    ['质量', `错 ${data.parseErrorCount} · 未解析 ${data.unresolvedCount} · 星号 ${data.starCount}`],
+    ['质量', `错 ${data.parseErrorCount} · 未解析 ${data.unresolvedCount} · 星号 ${data.starCount}`, dirty ? 'is-warn' : 'is-ok'],
     ['耗时', `${data.durationMillis}ms`],
-  ].forEach(([label, value]) => {
+  ].forEach(([label, value, cls], index) => {
     const div = document.createElement('div');
+    if (cls) {
+      div.className = cls;
+    }
+    // 入场错峰只给一次：顶栏是每次取数都重画的，逐条 delay 才有"仪器启动"的味道
+    div.style.setProperty('--i', index);
     const dt = document.createElement('dt');
     dt.textContent = `${label} `;
     const dd = document.createElement('dd');
@@ -103,9 +111,27 @@ async function loadOverview() {
     div.append(dt, dd);
     ui.overview.appendChild(div);
   });
+  renderStatus(data);
   fillLayerFilter(data.maxLayer);
   showScanError(data);
   return data;
+}
+
+/** 顶栏状态位：这一屏数据是从哪儿、什么时候、以什么相位来的 */
+function renderStatus(data) {
+  ui.status.textContent = '';
+  const src = document.createElement('b');
+  src.textContent = data.source || '未配置目录';
+  const sep = document.createElement('span');
+  sep.className = 'sep';
+  sep.textContent = '·';
+  const phase = document.createElement('span');
+  phase.textContent = data.scanError ? '启动扫描失败'
+    : data.scanPhase === 'running' ? '扫描中…'
+    : data.scanPhase === 'skipped' ? '已跳过启动扫描'
+    : `就绪 · ${data.durationMillis}ms`;
+  ui.status.append(src, sep, phase);
+  ui.mark.classList.toggle('live', data.scanPhase === 'running' || !!data.scanError);
 }
 
 /**
@@ -183,7 +209,12 @@ async function loadTables() {
     name.textContent = row.db ? `${row.db}.${row.name}` : row.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `层 ${row.layer} · ↑${row.upstream} ↓${row.downstream} · ${row.colCount} 字段`;
+    // 层号色板：左栏列表和图共用同一份 layerColor，扫一眼就知道这张表在第几跳
+    const swatch = document.createElement('i');
+    swatch.className = 'dot';
+    swatch.style.background = layerColor(row.layer);
+    swatch.style.color = layerColor(row.layer);
+    meta.append(swatch, document.createTextNode(`第 ${row.layer} 层 · ↑${row.upstream} ↓${row.downstream} · ${row.colCount} 字段`));
     li.dataset.id = row.id;
     li.append(name, meta);
     li.addEventListener('click', guard(() => selectTable(row.id)));
@@ -250,7 +281,7 @@ async function drawTableGraph() {
   ui.title.textContent = state.table
     ? `表级链路：${state.table}（${ui.direction.options[ui.direction.selectedIndex].text}，深度 ${ui.depth.value}）`
     : `全量表级 DAG（${result.nodeCount} 表 / ${result.edgeCount} 边）`;
-  markSelected();
+  setHot(cy, state.table);
   drawLegend('table');
 }
 
@@ -274,18 +305,8 @@ async function drawColumnGraph() {
   });
   ui.warn.textContent = result.warning;
   ui.title.textContent = `${state.column || `${state.table} 全部字段`} 的字段链路（${result.nodeCount} 节点 / ${result.edgeCount} 边）`;
-  markColumn(cy, state.column);
+  setHot(cy, state.column);
   drawLegend('column');
-}
-
-function markSelected() {
-  cy.elements().removeClass('hot');
-  if (state.table) {
-    const node = cy.getElementById(state.table);
-    if (node.nonempty()) {
-      node.addClass('hot');
-    }
-  }
 }
 
 function drawLegend(kind) {
@@ -309,15 +330,12 @@ function drawLegend(kind) {
     note('点表节点：以它为中心裁剪，并在右栏看字段清单');
     return;
   }
-  [
-    ['#7d8794', 'IDENTITY 直通'],
-    ['#5b7fd4', 'EXPRESSION 表达式'],
-    ['#c08a2e', 'AGGREGATE 聚合'],
-    ['#a89bc4', 'CONSTANT 常量'],
-    ['#6fa8ae', 'POSITIONAL 按位置'],
-    ['#e0a870', 'STAR 星号（v1 不展开）'],
-    ['#e07a70', 'UNRESOLVED 来源未绑定'],
-  ].forEach(([color, label]) => swatch(color, label));
+  /* 图例逐项从 EDGE_STYLE 生成：这张表漏过 UNNAMED——语料里有未命名列边，
+     画布按默认色画了出来，图例却不认识它。键即语义，加一种加工方式就自动进图例。 */
+  Object.keys(EDGE_STYLE).forEach((derivation) =>
+    swatch(EDGE_STYLE[derivation]['line-color'],
+      `${derivation} ${derivationLabel(derivation)}`));
+  note('点线=按名字没对上（UNNAMED/STAR），虚线=需要人工确认（CONSTANT/UNRESOLVED）');
   note('灰底虚线框 = 语句内中间关系（CTE/子查询），已折进边的 hops');
 }
 
@@ -441,7 +459,7 @@ function exportPng() {
     return;
   }
   download(`lineage-${state.view}-${Date.now()}.png`,
-    cy.png({ full: true, scale: 2, bg: '#ffffff' }));
+    cy.png({ full: true, scale: 2, bg: ink.canvasBg }));
 }
 
 function exportJson() {

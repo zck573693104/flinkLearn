@@ -10,7 +10,62 @@ const DERIVATION_HINT = {
   UNRESOLVED: '来源未绑定',
 };
 
-const LAYER_COLORS = ['#4c8bf5', '#2ca089', '#d4a017', '#b5651d', '#8e44ad', '#5b6472'];
+/**
+ * 调色板只写在 app.css 的 :root 里，这里读同一份。
+ *
+ * 画布（Cytoscape）和 CSS 两边各存一份色值迟早会走样——图例说第 0 层是青色、
+ * 节点却画成蓝色这类事故就是这么来的。读不到变量时退回内置值，不让样式表拖垮渲染。
+ */
+const FALLBACK = {
+  layers: ['#4fd6c4', '#b6e34a', '#ffcb52', '#ff9a5a', '#f07bd0', '#8fa3b8'],
+  nodeInk: '#04080e',
+  edgeIdentity: '#7e93a8',
+  edgeExpression: '#6aa7ff',
+  edgeAggregate: '#ffc857',
+  edgeConstant: '#b79ce0',
+  edgePositional: '#5fd4c9',
+  edgeUnnamed: '#e3cb90',
+  edgeStar: '#ff9a5a',
+  edgeUnresolved: '#ff5d6c',
+  edgeDefault: '#38506b',
+  localFill: '#111a25',
+  localLine: '#5b7691',
+  localText: '#9db2c8',
+  hot: '#cbf24a',
+  faded: '#7e93a8',
+};
+
+function token(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+const LAYER_COLORS = FALLBACK.layers.map((color, index) =>
+  token(`--layer-${index}`, color));
+
+export const ink = {
+  nodeText: token('--node-ink', FALLBACK.nodeInk),
+  localFill: token('--local-fill', FALLBACK.localFill),
+  localLine: token('--local-line', FALLBACK.localLine),
+  localText: token('--local-text', FALLBACK.localText),
+  hot: token('--acid', FALLBACK.hot),
+  edgeDefault: token('--edge-default', FALLBACK.edgeDefault),
+  arrow: token('--edge-default', FALLBACK.edgeDefault),
+  /** 导出 PNG 的底色要跟屏上看的一致，不能再给一张白纸 */
+  canvasBg: token('--ink-0', '#05070c'),
+};
+
+/** 加工方式决定线的画法：低置信度的边必须在视觉上就和直通边区分开 */
+export const EDGE_STYLE = {
+  IDENTITY: { 'line-color': token('--edge-identity', FALLBACK.edgeIdentity), 'target-arrow-color': token('--edge-identity', FALLBACK.edgeIdentity) },
+  EXPRESSION: { 'line-color': token('--edge-expression', FALLBACK.edgeExpression), 'target-arrow-color': token('--edge-expression', FALLBACK.edgeExpression) },
+  AGGREGATE: { 'line-color': token('--edge-aggregate', FALLBACK.edgeAggregate), 'target-arrow-color': token('--edge-aggregate', FALLBACK.edgeAggregate), width: 2.2 },
+  CONSTANT: { 'line-color': token('--edge-constant', FALLBACK.edgeConstant), 'target-arrow-color': token('--edge-constant', FALLBACK.edgeConstant), 'line-style': 'dashed' },
+  POSITIONAL: { 'line-color': token('--edge-positional', FALLBACK.edgePositional), 'target-arrow-color': token('--edge-positional', FALLBACK.edgePositional) },
+  UNNAMED: { 'line-color': token('--edge-unnamed', FALLBACK.edgeUnnamed), 'target-arrow-color': token('--edge-unnamed', FALLBACK.edgeUnnamed), 'line-style': 'dotted' },
+  STAR: { 'line-color': token('--edge-star', FALLBACK.edgeStar), 'target-arrow-color': token('--edge-star', FALLBACK.edgeStar), 'line-style': 'dotted', width: 2 },
+  UNRESOLVED: { 'line-color': token('--edge-unresolved', FALLBACK.edgeUnresolved), 'target-arrow-color': token('--edge-unresolved', FALLBACK.edgeUnresolved), 'line-style': 'dashed', width: 2 },
+};
 
 export function derivationLabel(derivation) {
   return DERIVATION_HINT[derivation] || derivation || '未知';

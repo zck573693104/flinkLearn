@@ -1,5 +1,4 @@
-import { layerColor } from './badges.js';
-import { capNotice, fit, replace, runLayout } from './graph.js';
+import { capNotice, fit, nodePaint, replace, runLayout } from './graph.js';
 
 /**
  * 表级分层 DAG。
@@ -34,8 +33,7 @@ export function drawTable(cy, view, handlers) {
     })),
   ]);
   cy.nodes().forEach((node) => {
-    node.style('background-color', layerColor(node.data('layer')));
-    node.style('color', '#fff');
+    nodePaint(node);
     node.style('text-max-width', '170px');
   });
   runLayout(cy, 'LR');

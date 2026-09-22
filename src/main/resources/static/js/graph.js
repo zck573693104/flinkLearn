@@ -1,4 +1,6 @@
-/** 两张图共用的挂载、布局与超限判断。 */
+/** 两张图共用的挂载、节点画法、布局与超限判断。 */
+
+import { ink, layerColor } from './badges.js';
 
 export const NODE_CAP = 300;
 
@@ -16,35 +18,87 @@ export function create(el) {
         selector: 'node',
         style: {
           shape: 'round-rectangle',
-          'font-size': '10px',
-          color: '#22272f',
+          'font-size': '11px',
+          'font-family': 'Cascadia Mono, Consolas, monospace',
+          'font-weight': 500,
+          color: ink.nodeText,
           'text-valign': 'center',
           'text-halign': 'center',
           'text-wrap': 'ellipsis',
           'text-max-width': '150px',
           'background-opacity': 1,
-          'border-color': '#8a92a0',
+          'border-color': '#33475d',
           'border-width': 1,
         },
       },
       {
         selector: 'edge',
         style: {
-          width: 1.6,
-          'line-color': '#9aa3b2',
-          'target-arrow-color': '#9aa3b2',
+          width: 1.5,
+          'line-color': ink.edgeDefault,
+          'target-arrow-color': ink.edgeDefault,
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
-          'font-size': '9px',
-          color: '#6b7280',
+          'font-size': '9.5px',
+          'font-family': 'Cascadia Mono, Consolas, monospace',
+          color: ink.localText,
+          'text-background-color': '#05070c',
+          'text-background-opacity': 0.85,
+          'text-background-padding': '2px',
           label: '',
         },
       },
-      { selector: ':selected', style: { 'border-width': 3, 'border-color': '#2f6fdd' } },
-      { selector: '.hot', style: { 'border-width': 3, 'border-color': '#d4a017' } },
-      { selector: '.faded', style: { opacity: 0.22 } },
+      /* 选中态不在这里：Cytoscape 的直接样式压过样式表，节点底色/描边是 nodePaint() 逐个写的，
+         所以 .hot 写成样式表规则根本不会生效——高亮也必须走同一条直接样式路径，见 setHot()。 */
+      { selector: '.faded', style: { opacity: 0.16 } },
     ],
   });
+}
+
+/**
+ * 节点的基础外观：表级图和字段级图共用一份，避免两种图各写一遍颜色口径。
+ *
+ * 物理节点按层号取色、语句内中间关系压成暗底虚线框，都走直接样式；
+ * 这里把 overlay 显式关掉，是给 setHot() 留出的可视余量。
+ */
+export function nodePaint(node) {
+  const local = !!node.data('local');
+  node.style({
+    'background-color': local ? ink.localFill : layerColor(node.data('layer')),
+    color: local ? ink.localText : ink.nodeText,
+    'border-style': local ? 'dashed' : 'solid',
+    'border-color': local ? ink.localLine : ink.nodeText,
+    'border-opacity': local ? 1 : 0.55,
+    'border-width': 1,
+    'overlay-opacity': 0,
+  });
+}
+
+/**
+ * 只让当前定位的那个节点描酸绿边：class 在直接样式面前说话不算数，
+ * 所以取消选中也要把基础外观重新写回去，而不是 removeClass 了事。
+ */
+export function setHot(cy, id) {
+  cy.nodes().forEach((node) => {
+    if (node.hasClass('hot')) {
+      node.removeClass('hot');
+      nodePaint(node);
+    }
+  });
+  if (!id) {
+    return false;
+  }
+  const node = cy.getElementById(id);
+  if (!node.nonempty()) {
+    return false;
+  }
+  node.addClass('hot');
+  node.style({
+    'border-width': 3,
+    'border-color': ink.hot,
+    'border-opacity': 1,
+  });
+  return true;
 }
 
 function spec(depthDir) {

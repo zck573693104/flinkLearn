@@ -7,18 +7,32 @@ function query(params) {
   return pairs.length ? `?${pairs.join('&')}` : '';
 }
 
+/* 顶栏 2px 进度条：并发请求要计数，先回来的那个不能把条关掉 */
+let inflight = 0;
+
+function busy(delta) {
+  inflight = Math.max(0, inflight + delta);
+  document.body.classList.toggle('busy', inflight > 0);
+}
+
 async function request(path, options) {
-  const res = await fetch(BASE + path, options);
-  let body;
+  busy(1);
+  let res;
   try {
-    body = await res.json();
-  } catch (error) {
-    throw new Error(`${path} 返回非 JSON（HTTP ${res.status}）`);
+    res = await fetch(BASE + path, options);
+    let body;
+    try {
+      body = await res.json();
+    } catch (error) {
+      throw new Error(`${path} 返回非 JSON（HTTP ${res.status}）`);
+    }
+    if (!body.success) {
+      throw new Error(body.message || `HTTP ${res.status}`);
+    }
+    return body.data;
+  } finally {
+    busy(-1);
   }
-  if (!body.success) {
-    throw new Error(body.message || `HTTP ${res.status}`);
-  }
-  return body.data;
 }
 
 function json(body) {

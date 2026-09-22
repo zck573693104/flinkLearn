@@ -481,12 +481,12 @@ lineage:
 ```
 src/main/resources/static/
   index.html                     三栏骨架 + 顶栏统计/工具（深度、语料目录、重扫、两个导出）+ 空快照告警条 + 图头（标题/告警位/方向下拉）
-  css/app.css                    单文件；CSS 变量 + derivation 徽标配色 + mark 高亮色
-  js/api.js         9 端点封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）
-  js/badges.js      derivation 中文提示、层级配色、置信度分档
-  js/graph.js       挂载与样式表、dagre 布局 + breadthfirst 降级、节点尺寸、NODE_CAP
+  css/app.css                    单文件；深色仪器台调色板变量（:root 一处定义，见 §8.6）+ derivation 徽标配色 + mark 高亮色
+  js/api.js         9 端点封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）+ 在途计数驱动顶栏进度条
+  js/badges.js      **调色板唯一出口**：读 app.css 的 :root 变量导出 ink/EDGE_STYLE/LAYER_COLORS + derivation 中文提示、置信度分档
+  js/graph.js       挂载与样式表、nodePaint()（两张图共用的节点画法）、setHot()（选中态）、dagre 布局 + breadthfirst 降级、节点尺寸、NODE_CAP
   js/graphTable.js  表级 DAG（LR）
-  js/graphColumn.js 字段链路图（TB，derivation → 线型/颜色，中间关系灰底虚线）
+  js/graphColumn.js 字段链路图（TB，derivation → 线型/颜色，中间关系暗底虚线框）
   js/detailPanel.js 右栏：表详情 / 字段来源 / 边证据 / 试解析结果
   js/main.js        选区状态机 + 全部事件绑定 + URL hash + 导出
   vendor/cytoscape.min.js 3.32.1(431508B)  dagre.min.js 0.8.5(283803B)
@@ -524,7 +524,7 @@ src/main/resources/static/
 5. SQL 原文 + 来源、目标列高亮。
 
 - 高亮实现：拿 `from`/`to` 的**末段列名**在原文里正则匹配（`escapeRegExp` + `\b`），目标 `mark.target` 蓝底、来源黄底；来源列与目标列同名时不区分两处出现（v1 不做词法定位）。全程 `createElement`/`createTextNode` 拼 DOM，**绝不用 innerHTML 塞 SQL**——语料文本是不可信输入。
-- 导出：PNG 用 `cy.png({full:true,scale:2,bg:'#ffffff'})` + `<a download>`（原计划写的 `toBlob` 不是 cytoscape 的 API）；子图 JSON 把 `{view,table,column,graph}` 打成 Blob 下载，`graph` 就是最近一次服务端下发的子图原文，可离线复核。
+- 导出：PNG 用 `cy.png({full:true,scale:2,bg:ink.canvasBg})` + `<a download>`（原计划写的 `toBlob` 不是 cytoscape 的 API；底色从 §8.6 的调色板变量取，不能再给一张白纸）；子图 JSON 把 `{view,table,column,graph}` 打成 Blob 下载，`graph` 就是最近一次服务端下发的子图原文，可离线复核。
 - URL hash：`#view=table|column&table=<id>&column=<table.column>`，用 `history.replaceState` 同步（不推历史栈），外部改 hash 走 `hashchange` 恢复选区，链接可直接分享定位。
 
 ### 8.4 M4 验收实测（2026-09-21）
@@ -578,6 +578,36 @@ src/main/resources/static/
 - 健康实例回归一遍没坏：顶栏 `15 文件/22 语句/14 表（12 有字段）/2327 字段边/6 表边/层级 1/错 0·未解析 0·星号 0`；点表 → 右栏 783 字段截到 80 行；点 `vin` 行 → `#view=column…&column=….vin`、标题 `…vin 的字段链路（5 节点 / 4 边）`、图例 8 项、console 只剩 cytoscape 的 wheelSensitivity 提示。**表级与字段级血缘本来就都解析正常**，页面空白纯属上面三条。
 - 一处工具侧的假象，记下来免得下轮再追：browser-use 的坐标点击在这个 531px 视口上没落到按钮（`elementFromPoint(按钮中心)` 返回的正是该按钮，`element.click()` 则照常生效），是自动化侧的坐标问题，不是页面缺事件。
 - 新增 `CorpusScannerTest` 2 例（启动失败留原因、`rescan-on-start=false` 自成一态），`mvn -o clean package` **254 绿**。
+
+### 8.6 深色仪器台改造（2026-09-22，只动样式与交互层）
+
+方向由用户选定：**深色数据控制台**。硬约束三条，全部守住——零构建、无框架、**不引 web 字体**（离线跑，为一个字形多一次外链请求不值），以及**REST 契约与解析层一行不改**（本轮 `src/main/java` 零改动，`mvn -o clean test` 仍 **255 绿**）。
+
+字体只用系统里真实存在的：标题 `Bahnschrift SemiBold Condensed`（Windows 自带，等宽压缩的工程感），正文/数据 `Cascadia Mono`→`Consolas`，配 `font-variant-numeric: tabular-nums` 让统计条的数字对齐。
+
+**调色板只有一个来源**：色值全写在 `app.css` 的 `:root`，`badges.js` 用 `getComputedStyle(document.documentElement).getPropertyValue()` 把同一份读出来，导出 `ink` / `EDGE_STYLE` / `layerColor()`，读不到再退内置兜底值。CSS 与画布各存一份色值是"图例说第 0 层是青色、节点画成蓝色"这类事故的成因。**图例改为遍历 `EDGE_STYLE` 的键生成**，不再手抄一份清单。
+
+浏览器实测（真页面、真接口）揪出两个纸面看不出来的缺陷，都已修：
+
+1. **`UNNAMED` 有语义、没颜色也没图例**。仓库语料里 `kafka_user_app_data` 的字段边含 `IDENTITY/EXPRESSION/UNNAMED` 三种，而 `EDGE_STYLE` 没有 `UNNAMED` 键 → 画布按默认边色画，图例里根本没有这一项，用户无从知道那条线是什么意思（§12 早就承诺"`POSITIONAL`/`UNNAMED` 显式标注"，这轮才算兑现到图上）。修法：新增 `--edge-unnamed: #e3cb90`（与既有 `.badge.UNNAMED` 同色）+ `EDGE_STYLE.UNNAMED`（点线），并把图例改成从 `EDGE_STYLE` 生成，从此加一种 derivation 自动进图例。
+2. **选中态整条规则是死的**。Cytoscape 的**直接样式（`ele.style(k,v)`）优先级高于样式表**，而 `drawTable` 给每个节点逐个写了 `overlay-*` 同色发光与 `border-color` → 样式表里的 `.hot`/`:selected` 永不生效。实测读数：打上 `hot` 后解析出的仍是该节点自己的 `overlay-color rgb(182,227,74)`（层色）与 `border-color rgb(4,8,14)`，选中点和没选中点长得一样。修法：两张图的节点基础外观合并成 `graph.js#nodePaint()`（物理=层色牌 + 近黑字，中间关系=暗底虚线框），基础态**不再占用 overlay**；高亮走同一直接样式路径由 `setHot(cy, id)` 写/清（3px 酸绿描边，取消选中时重新调 `nodePaint()` 复原，而不是 `removeClass` 了事）。顺带定见：**暗底上同色 overlay 发光本来就看不见**（酸绿叠在柠檬绿的牌子上），选中该用描边而不是光晕，故 `.hot`/`:selected` 两条样式表规则删除，机制只留一处。
+
+另一条踩过的坑值得留下：cytoscape **3.32.1 没有 `shadow-*`**，写了会在控制台按节点数刷出 68 条 `The style property 'shadow-blur' is invalid`。暗底"浮起来"的效果要用受支持的 `overlay-*`/`border` 实现。
+
+窄视口（本轮唯一改动是新增顶栏状态条导致挤高）：`.grid` 的 `grid-auto-rows` 先按 `minmax(220px, auto)` 写，实测 `#graph` 被 tabs/图例挤到 **516x112**——等于没有图；改 `minmax(300px, 46vh)` + 单列时整页 `overflow:auto`，复测三行 `300px 300px 300px`、`#graph` 516x192。
+
+**验收方法记下来，下轮不必重新摸索**：in-app Browser 表面处于 `visibilityState=hidden` 时 `take_screenshot` 直接拒（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`），且 rAF 被冻结——`getImageData` 读实时画布全 0，那不是"渲染坏了"。可行的像素取证路径是：用页面自己的 `create()`/`drawTable()`/`drawColumns()` 把一个容器渲染到屏外（`position:fixed;left:-3000px`，给到宽高即可），再取 `cy.png()`（**同步绘制**，不受 rAF 影响）→ `fetch(dataURI).blob()` → **`createImageBitmap`**。注意别用 `new Image().decode()`：隐藏页里它不 resolve，会把整段脚本拖到 15s 超时。
+
+像素读数（`kafka_user_app_data` 字段视图，29 节点 / 27 边，PNG 3381x102）：
+
+- 画布底 `#05070c` 占 **263545/344862 ≈ 76%**，深色是真的而不是 CSS 变量写了就算。
+- 层色牌：层 0 青 `#4fd6c4` 3628px / 层 1 柠 `#b6e34a` 45207px，节点数 2 与 27 对得上。
+- 边色与图例逐颗对照：`IDENTITY #7e93a8` 5585px（17 边）、`EXPRESSION #6aa7ff` 1421px（9 边）、`UNNAMED #e3cb90` 52px（1 边），本视图没有的 `AGGREGATE/CONSTANT/STAR/UNRESOLVED` 全为 0px——**图例不再有说谎的项**。
+- 中间关系（本语料 `localRelationCount=0`，只能按契约形状喂合成视图验证）：节点解析出 `background rgb(17,26,37)`、`border-style dashed`、`border rgb(91,118,145)`，像素上 `#111a25` 998px / 边线 49px 确实在画布上。
+- 选中态 A/B：同一视图 `#cbf24a` 像素 **0 → 1256 → 0**（标记前/后/取消后），且取消后层色底与虚线框都复原；把 `hot` 从中间关系挪到物理表，`localLine` 像素 0 → 44 精确复原。
+- 交互链一遍照旧全绿：顶栏 8 组 `15 文件/22 语句/14 表（12 有字段）/2327 字段边/6 表边/层级 1/错 0·未解析 0·星号 0`、状态条 `D:\project\flinkLearn\sql · 就绪 · 1119ms`、左栏行前圆点色 = 画布层色、表详情 783 字段截 80 行、字段证据块（`EXPRESSION · 表达式` 徽标 + 置信度 85% + 引擎 FLINK + `第 1 位`）、SQL 原文高亮目标酸底/来源橙底、点边出 `字段边…命中 1 条边`、质量页空组带 acid 左边框、试解析 `1 条语句 → 2 条字段边 → 3 张表`。
+- `api.js` 的在途计数经直接调用验证：并发两请求时先完成一个 `body.busy` 仍为 `true`，全部完成才 `false`，接口报错同样释放（不卡进度条）。`.mark.live`（青色脉冲）按设计只在 `scanPhase=running`/`scanError` 时挂上，就绪态是稳的酸绿点。
+- console 全程只剩 cytoscape 那条 `wheelSensitivity` 提示（有意调低滚轮灵敏度所致），**零 error、零 invalid-style**。
 
 ## 9. 里程碑与工作量
 
@@ -699,10 +729,11 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 ## 14. 验收标准（可打勾）
 
 - [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **255/255**（M6 收尾 254 + 「有字段的表」只数物理表 1，见 §11.1）+ boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
-- [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。**像素级观感仍待人眼过一遍**（验证用的 in-app Browser 是 0x0 视口，只能读结构与文本）。
+- [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。画布像素也已核到（屏外渲染取 `cy.png()` 再数色，方法见 §8.6）；剩下"人眼觉得好不好看"这一条只能由使用者判。
 - [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
 - [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。
 - [x] 5. `SELECT *` 边显示 `STAR · 星号未展开` 徽标 + 图例色块 + 30% 置信度；`UNRESOLVED` 边在 `/api/issues`、左栏质量过滤、字段清单徽标与右栏红条四处都可见——第 3、4 处是本轮补验时才修出来的，见 §8.4。
 - [x] 6. 涉密语料巡检（M5）：两份语料（`sql/` 与临时语料）列级 6 条 oracle 泄漏计数均为 0，折叠告警 0，剩下 2 条 UNRESOLVED 已定性为"没有列字典就是歧义、按约定不猜"；临时目录已删除，文档与用例里的表名列名一律脱敏（实测见 §11.1）。
 - [x] 7. 本方案入库为 `outputs/` 下唯一现行设计文档；两份旧 Calcite 路线文档已删除，作废理由保留在 §0。
 - [x] 8. 空快照必须自己说清是哪一种：**没在扫 / 扫失败（目录指错）/ 扫到 0 个 .sql / 跳过启动扫描**四态在页面上可区分，且 `running` 态会在 60s 内轮询自愈成图（`/api/overview` 的 `scanPhase`/`scanError` + 顶部横幅，实测见 §8.5）。
+- [x] 9. 深色仪器台（§8.6）：样式与交互层改完，**REST 契约与解析层零改动**（`mvn -o clean test` 255 绿）；调色板一处定义、CSS 与画布同源，图例由 `EDGE_STYLE` 生成——本视图里出现的每种边色都在画布上数得到像素、没出现的为 0px，选中态像素 0→1256→0 可打可消。

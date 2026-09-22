@@ -3,15 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05070c">
 <title>SQL 字段级血缘</title>
+<!-- 内联 SVG 图标：这是个离线跑的本地工具，不为一个 favicon 去多要一次请求 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%2305070c'/%3E%3Cpath d='M6 6h6M12 18h6M6 12h12' stroke='%23cbf24a' stroke-width='1.5' fill='none'/%3E%3Ccircle cx='5' cy='6' r='2.3' fill='%234fd6c4'/%3E%3Ccircle cx='5' cy='18' r='2.3' fill='%23ffcb52'/%3E%3Ccircle cx='19' cy='12' r='2.5' fill='%23cbf24a'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/css/app.css">
 <script src="/vendor/dagre.min.js"></script>
 <script src="/vendor/cytoscape.min.js"></script>
 <script src="/vendor/cytoscape-dagre.js"></script>
 </head>
 <body>
+<div class="loadbar" aria-hidden="true"></div>
 <header class="topbar">
-  <h1>SQL 血缘</h1>
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>SQL 血缘<small>column lineage console</small></h1>
+  </div>
+  <p id="status" class="status" role="status"></p>
   <dl id="overview" class="stats"></dl>
   <div class="tools">
     <label class="field">深度
