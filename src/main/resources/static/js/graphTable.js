@@ -36,7 +36,7 @@ export function drawTable(cy, view, handlers) {
     nodePaint(node);
     node.style('text-max-width', '170px');
   });
-  runLayout(cy, 'LR');
+  runLayout(cy);
   fit(cy);
   bind(cy, handlers);
   return { warning: '', nodeCount: cy.nodes().size(), edgeCount: cy.edges().size() };

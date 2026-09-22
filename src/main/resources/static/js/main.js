@@ -8,6 +8,12 @@ import { api } from './api.js';
 import { create, fit, setHot } from './graph.js';
 import { drawColumns } from './graphColumn.js';
 import { drawTable } from './graphTable.js';
+import {
+  parsedColumnDetail,
+  parsedColumnsView,
+  parsedTableDetail,
+  tableOf,
+} from './parsed.js';
 import { EDGE_STYLE, derivationLabel, ink, layerColor } from './badges.js';
 import {
   renderColumn,
@@ -40,6 +46,8 @@ const ui = {
   scanDir: document.getElementById('scan-dir'),
   status: document.getElementById('status'),
   mark: document.querySelector('.brand .mark'),
+  tabParsedTable: document.getElementById('tab-parsed-table'),
+  tabParsedColumn: document.getElementById('tab-parsed-column'),
 };
 
 const state = {
@@ -52,6 +60,10 @@ const state = {
   payload: null,
   /** /api/overview 给的最大层号，图例按它画色块 */
   maxLayer: 0,
+  /** 最近一次 /api/parse 的结果（含用户原文），临时视图的唯一数据源 */
+  parse: null,
+  /** 临时视图里选中的字段，切过去时用来直接填右栏 */
+  parsedColumn: null,
 };
 
 const cy = create(ui.graph);
@@ -261,13 +273,30 @@ async function runParse() {
     return;
   }
   try {
-    renderParse(ui.parseOut, await api.parse(sql));
+    const data = await api.parse(sql);
+    data.rawSql = sql;
+    state.parse = data;
+    state.parsedColumn = null;
+    markParsedTabs();
+    renderParse(ui.parseOut, data);
+    // 解析完直接落到临时表级视图：用户粘 SQL 的下一步一定是"图在哪儿"
+    switchView('parsed-table');
+    await refresh();
   } catch (error) {
     renderError(ui.parseOut, error);
   }
 }
 
+function markParsedTabs() {
+  ui.tabParsedTable.disabled = !state.parse;
+  ui.tabParsedColumn.disabled = !state.parse;
+}
+
 /* ---------------- 中栏 ---------------- */
+
+function maxLayerOf(view) {
+  return (view.nodes || []).reduce((max, node) => Math.max(max, node.layer || 0), 0);
+}
 
 async function drawTableGraph() {
   const view = await api.tableGraph({ root: state.table, direction: direction(), depth: depth() });
@@ -282,7 +311,33 @@ async function drawTableGraph() {
     ? `表级链路：${state.table}（${ui.direction.options[ui.direction.selectedIndex].text}，深度 ${ui.depth.value}）`
     : `全量表级 DAG（${result.nodeCount} 表 / ${result.edgeCount} 边）`;
   setHot(cy, state.table);
-  drawLegend('table');
+  drawLegend('table', state.maxLayer);
+}
+
+/** 临时解析视图：数据只来自最近一次 /api/parse，全程不再打快照端点 */
+async function drawParsedTable() {
+  const view = state.parse.graph;
+  state.payload = view;
+  const result = drawTable(cy, view, {
+    onTable: guard(showParsedTable),
+    onTableEdge: guard((data) => renderTableEdge(ui.detail, data)),
+    onBlank: guard(() => renderEmpty(ui.detail, '临时解析视图：点表节点看它在这次解析里的字段清单。')),
+  });
+  ui.warn.textContent = result.warning;
+  ui.title.textContent = `试解析·表级（未入快照，${result.nodeCount} 表 / ${result.edgeCount} 边）`;
+  drawLegend('table', maxLayerOf(view), '这张图来自输入框里的 SQL，重扫目录或换表即失效');
+}
+
+async function drawParsedColumns() {
+  const view = parsedColumnsView(state.parse);
+  state.payload = view;
+  const result = drawColumns(cy, view, {
+    onColumn: guard((id) => openParsedColumn(id)),
+    onEdge: guard((data) => showParsedEdge(data.source, data.target)),
+  });
+  ui.warn.textContent = result.warning;
+  ui.title.textContent = `试解析·字段（未入快照，${result.nodeCount} 节点 / ${result.edgeCount} 边）`;
+  drawLegend('column', maxLayerOf(view), '链路里出现的中间关系仍折在边的 hops 里，点边看逐跳');
 }
 
 async function drawColumnGraph() {
@@ -290,7 +345,7 @@ async function drawColumnGraph() {
     ui.warn.textContent = '';
     ui.title.textContent = '先选一张表再看字段链路';
     cy.elements().remove();
-    drawLegend('column');
+    drawLegend('column', state.maxLayer);
     return;
   }
   const view = await api.columnGraph({
@@ -306,10 +361,10 @@ async function drawColumnGraph() {
   ui.warn.textContent = result.warning;
   ui.title.textContent = `${state.column || `${state.table} 全部字段`} 的字段链路（${result.nodeCount} 节点 / ${result.edgeCount} 边）`;
   setHot(cy, state.column);
-  drawLegend('column');
+  drawLegend('column', state.maxLayer);
 }
 
-function drawLegend(kind) {
+function drawLegend(kind, maxLayer, extraNote) {
   ui.legend.textContent = '';
   const swatch = (color, label) => {
     const span = document.createElement('span');
@@ -324,25 +379,48 @@ function drawLegend(kind) {
     ui.legend.appendChild(span);
   };
   if (kind === 'table') {
-    for (let layer = 0; layer <= state.maxLayer; layer++) {
+    for (let layer = 0; layer <= maxLayer; layer++) {
       swatch(layerColor(layer), `第 ${layer} 层`);
     }
     note('点表节点：以它为中心裁剪，并在右栏看字段清单');
-    return;
+  } else {
+    /* 图例逐项从 EDGE_STYLE 生成：这张表漏过 UNNAMED——语料里有未命名列边，
+       画布按默认色画了出来，图例却不认识它。键即语义，加一种加工方式就自动进图例。 */
+    Object.keys(EDGE_STYLE).forEach((derivation) =>
+      swatch(EDGE_STYLE[derivation]['line-color'],
+        `${derivation} ${derivationLabel(derivation)}`));
+    note('点线=按名字没对上（UNNAMED/STAR），虚线=需要人工确认（CONSTANT/UNRESOLVED）');
+    note('灰底虚线框 = 语句内中间关系（CTE/子查询），已折进边的 hops');
   }
-  /* 图例逐项从 EDGE_STYLE 生成：这张表漏过 UNNAMED——语料里有未命名列边，
-     画布按默认色画了出来，图例却不认识它。键即语义，加一种加工方式就自动进图例。 */
-  Object.keys(EDGE_STYLE).forEach((derivation) =>
-    swatch(EDGE_STYLE[derivation]['line-color'],
-      `${derivation} ${derivationLabel(derivation)}`));
-  note('点线=按名字没对上（UNNAMED/STAR），虚线=需要人工确认（CONSTANT/UNRESOLVED）');
-  note('灰底虚线框 = 语句内中间关系（CTE/子查询），已折进边的 hops');
+  if (extraNote) {
+    note(extraNote);
+  }
 }
 
 /* ---------------- 选区联动 ---------------- */
 
 /** 按选区重画中栏 + 填右栏：换视图、换深度、点节点、启动都只走这一条路径 */
 async function refresh() {
+  if (state.view === 'parsed-table' || state.view === 'parsed-column') {
+    // 没解析过就被点到了（手工换 hash、解析失败后残留）：退回快照视图，别画空图
+    if (!state.parse) {
+      switchView('table');
+      await refresh();
+      return;
+    }
+    if (state.view === 'parsed-table') {
+      await drawParsedTable();
+      renderEmpty(ui.detail, '临时解析视图：点表节点看它在这次解析里的字段清单，点表级边看它出自哪条语句。');
+      return;
+    }
+    await drawParsedColumns();
+    if (state.parsedColumn) {
+      showParsedColumnDetail(state.parsedColumn);
+    } else {
+      renderEmpty(ui.detail, '点字段节点看它在这次解析里的来源，点边看加工方式与 SQL 原文。');
+    }
+    return;
+  }
   if (state.view === 'table') {
     await drawTableGraph();
   } else {
@@ -382,6 +460,7 @@ async function showColumnDetail(columnId, table) {
 }
 
 async function selectTable(tableId) {
+  leaveParsed();
   state.table = tableId;
   state.column = null;
   state.columns = null;
@@ -391,11 +470,50 @@ async function selectTable(tableId) {
 }
 
 async function selectColumn(columnId, table) {
+  leaveParsed();
   state.table = table;
   state.column = columnId;
   syncHash();
   await refresh();
   await markActiveRow();
+}
+
+/* ---------------- 临时解析视图的右栏 ---------------- */
+
+/** 快照里的动作（选表、点空白）一旦发动就退出临时解析视图 */
+function leaveParsed() {
+  if (state.view === 'parsed-table' || state.view === 'parsed-column') {
+    switchView('table');
+  }
+}
+
+function showParsedTable(tableId) {
+  setHot(cy, tableId);
+  renderTable(ui.detail, parsedTableDetail(state.parse, tableId), {
+    onColumn: (column) => openParsedColumn(column.id),
+    onWholeTable: () => openParsedColumn(null),
+  });
+}
+
+function showParsedColumnDetail(columnId) {
+  setHot(cy, columnId);
+  renderColumn(ui.detail,
+    parsedTableDetail(state.parse, tableOf(columnId)),
+    parsedColumnDetail(state.parse, columnId));
+}
+
+/** 同一对端点可能有多条边（不同加工方式），和快照版的 /api/edge/column 同口径 */
+function showParsedEdge(from, to) {
+  const rows = (state.parse.columnEdges || [])
+    .filter((edge) => edge.from === from && edge.to === to)
+    .map((edge) => ({ ...edge, sqlText: state.parse.rawSql }));
+  renderEdge(ui.detail, rows, `${from} → ${to}`);
+}
+
+function openParsedColumn(columnId) {
+  state.parsedColumn = columnId;
+  switchView('parsed-column');
+  refresh().catch(fail);
 }
 
 /** 左栏高亮跟着选区走：搜索/过滤之后列表会重画，所以复用同一次取数 */
@@ -436,6 +554,7 @@ function guard(fn) {
 }
 
 async function resetSelection() {
+  leaveParsed();
   state.table = null;
   state.column = null;
   state.columns = null;
@@ -528,7 +647,10 @@ document.querySelectorAll('#left-tabs button').forEach((button) => {
 document.querySelectorAll('#view-tabs button').forEach((button) => {
   button.addEventListener('click', () => {
     switchView(button.dataset.view);
-    syncHash();
+    // 临时解析视图不写 hash：刷新之后 payload 就没了，那条链接分享出去只能得到空图
+    if (!button.dataset.view.startsWith('parsed-')) {
+      syncHash();
+    }
     refresh().catch(fail);
   });
 });
@@ -549,6 +671,11 @@ document.getElementById('rescan').addEventListener('click', guard(async () => {
   state.table = null;
   state.column = null;
   state.columns = null;
+  // 快照换了，上一段临时解析结果也就没有对照意义了
+  state.parse = null;
+  state.parsedColumn = null;
+  markParsedTabs();
+  switchView('table');
   syncHash();
   await loadOverview();
   await loadTables();

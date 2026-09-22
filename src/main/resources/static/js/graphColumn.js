@@ -55,7 +55,7 @@ export function drawColumns(cy, view, handlers) {
     edge.on('mouseover', () => edge.style('label', edge.data('derivation')));
     edge.on('mouseout', () => edge.style('label', ''));
   });
-  runLayout(cy, 'TB');
+  runLayout(cy);
   fit(cy);
   bind(cy, handlers);
   return { warning: '', nodeCount: cy.nodes().size(), edgeCount: cy.edges().size() };

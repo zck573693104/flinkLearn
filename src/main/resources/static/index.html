@@ -8,9 +8,7 @@
 <!-- 内联 SVG 图标：这是个离线跑的本地工具，不为一个 favicon 去多要一次请求 -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%2305070c'/%3E%3Cpath d='M6 6h6M12 18h6M6 12h12' stroke='%23cbf24a' stroke-width='1.5' fill='none'/%3E%3Ccircle cx='5' cy='6' r='2.3' fill='%234fd6c4'/%3E%3Ccircle cx='5' cy='18' r='2.3' fill='%23ffcb52'/%3E%3Ccircle cx='19' cy='12' r='2.5' fill='%23cbf24a'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/css/app.css">
-<script src="/vendor/dagre.min.js"></script>
 <script src="/vendor/cytoscape.min.js"></script>
-<script src="/vendor/cytoscape-dagre.js"></script>
 </head>
 <body>
 <div class="loadbar" aria-hidden="true"></div>
@@ -62,7 +60,8 @@
 
     <section id="panel-parse" class="panel hidden">
       <textarea id="parse-sql" rows="8" placeholder="粘贴一条 INSERT / CREATE TABLE AS SELECT"></textarea>
-      <button id="parse-run" type="button">解析看结果</button>
+      <button id="parse-run" type="button">解析并画到图上</button>
+      <p class="note">解析结果只在内存里，不进快照；画完可用中栏「试解析·表级 / 试解析·字段」来回切。</p>
       <div id="parse-out" class="parse-out"></div>
     </section>
   </aside>
@@ -71,6 +70,8 @@
     <nav class="tabs" id="view-tabs" aria-label="图视图">
       <button type="button" data-view="table" class="active">表级 DAG</button>
       <button type="button" data-view="column">字段链路</button>
+      <button type="button" data-view="parsed-table" id="tab-parsed-table" disabled>试解析·表级</button>
+      <button type="button" data-view="parsed-column" id="tab-parsed-column" disabled>试解析·字段</button>
     </nav>
     <div class="graph-head">
       <span id="graph-title" class="graph-title">全量血缘（未选表）</span>

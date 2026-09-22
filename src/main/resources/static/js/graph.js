@@ -1,11 +1,8 @@
-/** 两张图共用的挂载、节点画法、布局与超限判断。 */
+/** 两张图共用的挂载、节点画法、分层排布与超限判断。 */
 
 import { ink, layerColor } from './badges.js';
 
 export const NODE_CAP = 300;
-
-/** dagre 由 vendor 脚本自动注册；万一没注册成功就退回内置 breadthfirst，图仍然可看 */
-let layoutName = 'dagre';
 
 export function create(el) {
   return window.cytoscape({
@@ -100,42 +97,130 @@ export function setHot(cy, id) {
   return true;
 }
 
-function spec(depthDir) {
-  if (layoutName === 'dagre') {
-    return {
-      name: 'dagre',
-      rankdir: depthDir,
-      nodesep: depthDir === 'LR' ? 14 : 24,
-      ranksep: depthDir === 'LR' ? 90 : 70,
-      ranker: 'network-simplex',
-      avoidOverlap: true,
-      animate: false,
-      padding: 24,
-    };
-  }
-  return {
-    name: 'breadthfirst',
-    directed: true,
-    fit: true,
-    padding: 24,
-    spacingFactor: 1.2,
-    animate: false,
-  };
+/** 列间距（沿层方向）与同层内间距，LR/TB 各用一套 */
+const GAP = {
+  LR: { rank: 110, node: 16 },
+  TB: { rank: 80, node: 26 },
+};
+const FIT_PADDING = 24;
+
+function num(value) {
+  return parseFloat(value) || 0;
 }
 
-/** 布局异常只降级不抛错：布局挂了不该让整张图消失 */
-export function runLayout(cy, direction) {
-  try {
-    const layout = cy.layout(spec(direction));
-    layout.run();
-  } catch (error) {
-    if (layoutName === 'dagre') {
-      layoutName = 'breadthfirst';
-      runLayout(cy, direction);
-      return;
+/** 按服务端下发的 layer 分列：层号缺失一律按第 0 层处理 */
+function groupByLayer(nodes) {
+  const columns = new Map();
+  nodes.forEach((node) => {
+    const layer = Number.isInteger(node.data('layer')) ? node.data('layer') : 0;
+    if (!columns.has(layer)) {
+      columns.set(layer, []);
     }
-    throw error;
+    columns.get(layer).push(node);
+  });
+  return [...columns.keys()].sort((a, b) => a - b).map((layer) => columns.get(layer));
+}
+
+/**
+ * 同层内的行序：按"已排定的前一层邻居"的平均行号排（重心法一趟）。
+ * 前一层没排过的节点（链路起点、孤岛、同层入边）留在原位，不打乱已有顺序。
+ */
+function orderWithinColumns(columns) {
+  const row = new Map();
+  columns.forEach((group, index) => {
+    const ranked = group
+      .map((node, position) => {
+        if (index === 0) {
+          return { node, key: position };
+        }
+        const before = node.incomers('node')
+          .filter((prev) => row.has(prev.id()))
+          .map((prev) => row.get(prev.id()));
+        return {
+          node,
+          key: before.length ? before.reduce((a, b) => a + b, 0) / before.length : position,
+        };
+      })
+      .sort((a, b) => a.key - b.key);
+    ranked.forEach((entry, position) => row.set(entry.node.id(), position));
+    group.splice(0, group.length, ...ranked.map((entry) => entry.node));
+  });
+}
+
+function sizeAlong(node, direction) {
+  return num(node.style(direction === 'TB' ? 'height' : 'width'));
+}
+
+function sizeCross(node, direction) {
+  return num(node.style(direction === 'TB' ? 'width' : 'height'));
+}
+
+/** 只量尺寸不落位，用于两个朝向里挑一个放得大的 */
+function measure(columns, direction) {
+  let along = 0;
+  let cross = 0;
+  columns.forEach((group) => {
+    along += Math.max(...group.map((node) => sizeAlong(node, direction))) + GAP[direction].rank;
+    cross = Math.max(cross, group.reduce(
+      (sum, node) => sum + sizeCross(node, direction) + GAP[direction].node,
+      GAP[direction].node,
+    ));
+  });
+  return direction === 'TB' ? { w: cross, h: along } : { w: along, h: cross };
+}
+
+/** 落位：列 = 层，列内按行号堆叠，短列在跨轴上居中对齐 */
+function place(columns, direction) {
+  const box = measure(columns, direction);
+  const crossTotal = direction === 'TB' ? box.w : box.h;
+  let alongCursor = 0;
+  columns.forEach((group) => {
+    const depth = Math.max(...group.map((node) => sizeAlong(node, direction)));
+    const span = group.reduce(
+      (sum, node) => sum + sizeCross(node, direction) + GAP[direction].node,
+      GAP[direction].node,
+    ) - GAP[direction].node;
+    let crossCursor = (crossTotal - span) / 2;
+    group.forEach((node) => {
+      const cross = sizeCross(node, direction);
+      if (direction === 'TB') {
+        node.position('x', crossCursor + cross / 2);
+        node.position('y', alongCursor + depth / 2);
+      } else {
+        node.position('x', alongCursor + depth / 2);
+        node.position('y', crossCursor + cross / 2);
+      }
+      crossCursor += cross + GAP[direction].node;
+    });
+    alongCursor += depth + GAP[direction].rank;
+  });
+}
+
+/**
+ * 分层排布：列号直接用服务端算好的 layer，不再交给 dagre 重排。
+ *
+ * 语料实测：6 条互不相干的表边被 dagre 按连通分量摊成 8 列 1653×200，
+ * fit 到中间栏只剩 0.39 缩放，字号 4px、线宽 0.6px——数据全对但看上去"没有图"；
+ * 而且下游节点会排到上游左边，跟"第几层"图例直接矛盾。层号本来就是这套图的语义。
+ * 朝向按容器实际尺寸挑：谁的 fit 缩放大就用谁，避免长条图被压成一条线。
+ */
+export function runLayout(cy) {
+  const columns = groupByLayer(cy.nodes());
+  if (!columns.length) {
+    return;
   }
+  orderWithinColumns(columns);
+  const container = { w: cy.width(), h: cy.height() };
+  const zoomOf = (direction) => {
+    const box = measure(columns, direction);
+    return Math.min(
+      container.w / (box.w + FIT_PADDING * 2),
+      container.h / (box.h + FIT_PADDING * 2),
+    );
+  };
+  const horizontal = zoomOf('LR');
+  const vertical = zoomOf('TB');
+  place(columns, Number.isFinite(vertical) && vertical > horizontal ? 'TB' : 'LR');
 }
 
 export function replace(cy, elements) {

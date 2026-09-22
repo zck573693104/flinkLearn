@@ -2,8 +2,8 @@
 
 > 分支：`lineage-only-webui`（本方案实施分支，血缘专用、无 Flink 依赖）
 > 派生自：`feat-column-lineage-webui` @ `546ae69`
-> 日期：2026-09-21
-> 状态：**结构清理已完成，功能设计待评审**（本方案批准前不动解析/UI 代码）
+> 日期：2026-09-21（最后更新 2026-09-22）
+> 状态：**M0–M6 已全部落地**，§2–§13 是设计依据，§8.4–§8.8 与 §14 是逐项实测记录
 
 ## 0. 文档定位
 
@@ -16,7 +16,7 @@
 | `列级血缘实现方案.md` | 基于 Calcite `RelMetadataQuery.getColumnOrigins()`（Route B），依赖 Flink Planner 的 `RelNode`。该路线在当前代码里是占位符且已被明确移除（提交 `8df7442`），与"血缘关系只依赖 antlr4 解析"的约束冲突 |
 | `列级血缘实现总结.md` | 描述的是上述 Calcite 方案的"已完成"状态，与现状不符 |
 
-当前仓库**没有任何列级血缘代码**（已核查：`parser/model/` 与 `model/` 两套 DTO 全部是表级字段，无 `Column*` 结构）。本方案是新建，不是改造遗留物。
+立项时（2026-09-21）仓库**没有任何列级血缘代码**（已核查：`parser/model/` 与 `model/` 两套 DTO 全部是表级字段，无 `Column*` 结构）。本方案是新建，不是改造遗留物；§4–§8 描述的东西现已全部在仓库里，落地情况以各节末尾的实测记录为准。
 
 ## 1. 需求拆解
 
@@ -484,33 +484,37 @@ src/main/resources/static/
   css/app.css                    单文件；深色仪器台调色板变量（:root 一处定义，见 §8.6）+ derivation 徽标配色 + mark 高亮色
   js/api.js         9 端点封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）+ 在途计数驱动顶栏进度条
   js/badges.js      **调色板唯一出口**：读 app.css 的 :root 变量导出 ink/EDGE_STYLE/LAYER_COLORS + derivation 中文提示、置信度分档
-  js/graph.js       挂载与样式表、nodePaint()（两张图共用的节点画法）、setHot()（选中态）、dagre 布局 + breadthfirst 降级、节点尺寸、NODE_CAP
-  js/graphTable.js  表级 DAG（LR）
-  js/graphColumn.js 字段链路图（TB，derivation → 线型/颜色，中间关系暗底虚线框）
+  js/graph.js       挂载与样式表、nodePaint()（两张图共用的节点画法）、setHot()（选中态）、**按 layer 自算布局 runLayout()**（见 §8.7）、节点尺寸、NODE_CAP
+  js/graphTable.js  表级 DAG
+  js/graphColumn.js 字段链路图（derivation → 线型/颜色，中间关系暗底虚线框）
+  js/parsed.js      把 `/api/parse` 的 payload 拼成与快照同形的视图/详情形状，让试解析能直接画图（见 §8.8）
   js/detailPanel.js 右栏：表详情 / 字段来源 / 边证据 / 试解析结果
   js/main.js        选区状态机 + 全部事件绑定 + URL hash + 导出
-  vendor/cytoscape.min.js 3.32.1(431508B)  dagre.min.js 0.8.5(283803B)
-          cytoscape-dagre.js 2.5.0(12665B) + 3 个 LICENSE + README.md（版本、sha256、加载顺序）
+  vendor/cytoscape.min.js 3.32.1(431508B) + LICENSE-cytoscape.txt + README.md（版本、sha256）
 ```
 
 获取方式照原计划：`npm pack` 取 `dist/*.min.js` 拷进 `vendor/`，README 记版本与 sha256 便于审计；**无 CDN、无 webjars、无打包器、无 TS、无框架**，`<script type="module" src="/js/main.js">` 直接跑。
 
-`vendor/README.md` 里写死的加载顺序是硬约束：dagre → cytoscape → cytoscape-dagre。UMD 包自己会 `register(cytoscape)` 注册 `dagre` 布局，**不要再手写** `cytoscape('register','layout','dagre',…)`（那是错误 API 用法）；`graph.js#runLayout` 用 try/catch 兜底，布局注册失败就降级 `breadthfirst`，图不会消失。
+`index.html` 里只剩一处 `<script src="/vendor/cytoscape.min.js">`，且必须在模块标签之前（模块拿不到 `window.cytoscape` 就没法建图）。dagre 与 cytoscape-dagre 已在 §8.7 里下线，加载顺序不再是约束。
+
+**vendored 只剩一件**这件事由 `StaticAssetIntegrityTest` 兜着：它逐字符扫 `static/` 下的 JS 找没闭合的块注释，顺带核 `import` 目标、`index.html` 的资源引用和 `getElementById` 的 `id` 是否都存在——前端没有构建步骤，这类错误只会在浏览器里表现为整站白屏。
 
 ### 8.2 三栏交互
 
 - **左栏**三个 tab：表 / 质量 / 试解析。
   - 表：搜索框 250ms 防抖 + 层过滤 `<select>`（选项按 `/api/overview.maxLayer` 生成——**图的 rank 是唯一可信的分层来源，不按 ODS/DWD 前缀猜**，前缀识别留在 §13 范围外）+ "只看有质量问题"（对应 `onlyUnresolved`）+ 列表项 `层 n · ↑u ↓d · c 字段`。
   - 质量：5 组"计数 + 明细"（parseError SQL / UNRESOLVED 边 / STAR 边 / 没出血缘的文件 / 孤岛表），空组绿底，首次打开才发请求。
-  - 试解析：textarea → `POST /api/parse` → 逐语句卡片（输入表、插入模式、CTE/WINDOW/TEMPORAL 标记、未折叠字段边 + derivation 徽标、原文）。只读，不动快照。
-- **中栏**两个 tab 共享同一份选区 `state.{view,table,column}`。
-  - 表级 DAG：dagre LR，节点底色 = rank 层色；点表节点 = 以它为中心重裁（root + direction + depth）并让右栏出字段清单；点边出"来源表/目标表/jobId"；点空白清选区回全量。
-  - 字段链路：dagre TB，节点是 `table.column`，被折掉的中间关系（CTE/子查询/展开）画成灰底虚线框，边按 derivation 上色上型（UNRESOLVED 红虚线、STAR 橙点线、AGGREGATE 加粗金…），hover 出 derivation 标签，当前定位列打 `hot`。
+  - 试解析：textarea → `POST /api/parse` → 逐语句卡片（输入表、插入模式、CTE/WINDOW/TEMPORAL 标记、未折叠字段边 + derivation 徽标、原文）。只读，不动快照。按钮是「解析并画到图上」：卡片之外还会把血缘画到中栏，见 §8.8。
+- **中栏**的 tab 共享同一份选区 `state.{view,table,column,parsedColumn}`：快照两个（表级 / 字段）+ 试解析两个（§8.8）。
+  - 表级 DAG：按 `layer` 分层，节点底色 = 层色；点表节点 = 以它为中心重裁（root + direction + depth）并让右栏出字段清单；点边出"来源表/目标表/jobId"；点空白清选区回全量。
+  - 字段链路：节点是 `table.column`，被折掉的中间关系（CTE/子查询/展开）画成灰底虚线框，边按 derivation 上色上型（UNRESOLVED 红虚线、STAR 橙点线、AGGREGATE 加粗金…），hover 出 derivation 标签，当前定位列打 `hot`。
+  - 图头的「方向」下拉是**子图取数**方向（双向 / 只看来源 / 只看下游，喂给 `/api/graph/table` 的 `direction`），不是画法方向；画法方向由 `runLayout()` 在 LR / TB 里自动挑放缩更大的那个，详见 §8.7。
   - 性能闸门 `NODE_CAP=300`：超限**直接不画**，只回告警 + 保留右栏（语料里 783/787 列的表整表展开是 1568 节点，画出来必卡）。右栏字段清单另外截到 80 行。
-- **与原计划的三处实现期取舍**，记下来免得被当成漏做：
+- **与原计划的四处实现期取舍**，记下来免得被当成漏做：
   1. 不做右键上下文菜单。"看字段血缘 / 只看下游 / 展开整表字段" 改成「点节点即重裁」+ 右栏「铺开整表字段链路」按钮 + 图头方向下拉——少一层瞬时交互状态，能力一条没少。
-  2. 字段链路不做 swimlane 泳道。自算 y 坐标的收益抵不过成本，改 dagre TB + 层色，纵向排布照样看得清链路。
+  2. 字段链路不做 swimlane 泳道。自算 y 坐标的收益抵不过成本，改为按 `layer` 排 + 层色，纵向排布照样看得清链路。
   3. 边不按 `process_type` 上色，按 `derivation` 上色。字段级面板要回答的是"这条边多可信"，`process_type` 在表级边的证据里给。
+  4. 布局不引第三方分层引擎，`layer` 已经在 REST 响应里。自己摆坐标反而更准，代价是节点尺寸得手工调，见 §8.7。
 - 无框架、无构建，全部 ES module 相对导入。
 
 ### 8.3 证据块、导出与定位
@@ -611,6 +615,55 @@ src/main/resources/static/
 - `api.js` 的在途计数经直接调用验证：并发两请求时先完成一个 `body.busy` 仍为 `true`，全部完成才 `false`，接口报错同样释放（不卡进度条）。`.mark.live`（青色脉冲）按设计只在 `scanPhase=running`/`scanError` 时挂上，就绪态是稳的酸绿点。
 - console 全程只剩 cytoscape 那条 `wheelSensitivity` 提示（有意调低滚轮灵敏度所致），**零 error、零 invalid-style**。
 
+### 8.7 布局改为按 `layer` 自算：dagre 下线（2026-09-22）
+
+**症状**：`sql/` 目录扫完，顶栏统计条明明写着 `14 表 / 6 表边`，中栏却像"什么都没有"。接口侧先排除了数据问题——`/api/graph/table` 实返 14 节点 / 6 边，6 条边对这份语料是算术正确的（7 条 INSERT，一对端点重复被并掉，2 张 DDL-only 表没有边）。问题在画法。
+
+**根因**：dagre 按**连通分量**自己重排 rank，不看服务端下发的 `layer`。语料的边稀疏（14 节点只有 6 条边、互不相干的分量多），于是被摊成 **8 列 1653×200**——长宽比 8.3:1。fit 到中间栏只剩 **0.39 缩放**，节点上的字缩到 4.3px、边 0.59px，人眼看就是空白。更糟的是它把 layer 1 的节点画到了 layer 0 左边，和图例「第几层」直接矛盾。
+
+**改法**（`js/graph.js#runLayout()`，签名去掉了方向参数）：
+
+1. `groupByLayer()`：以 `node.data('layer')` 为**列号**，非整数（旧快照/手工构造）落到第 0 列，列按层号升序。服务端 `LayeredDagBuilder` 的 Tarjan+Kahn 已经是权威分层，前端没有理由再排一次。
+2. `orderWithinColumns()`：列内按重心排序——第 0 列保持原序，其后每列按其入边来源**已定行号的均值**稳定排序，让相连的节点在跨轴上尽量靠近，减少交叉。
+3. `measure()` / `place()`：按节点实际 `width`/`height` 累加 `GAP`（LR：rank 110 / node 16；TB：rank 80 / node 26），短列在跨轴居中。
+4. `zoomOf('LR')` 与 `zoomOf('TB')` 各估一次容器放缩，**取更大的那个方向**摆坐标。稀疏图（宽扁）自然走 TB，深链自然走 LR，不需要用户猜。
+
+不再有 `breadthfirst` 降级分支：自算坐标不可能"布局引擎没注册"，try/catch 只是把错误藏起来。
+
+**改前 / 改后**（中间栏画布按 708×637 仿真，`cy.fit(24)` 后取实际 extent 与 zoom）：
+
+| | extent | 长宽比 | fit zoom | 字高 | 边宽 | 列数 | 层序 |
+|---|---|---|---|---|---|---|---|
+| 表级 14 节点 · dagre | 1653×200 | 8.3:1 | 0.394 | 4.3px | 0.59px | 8 | layer 1 在 layer 0 **左边** |
+| 表级 14 节点 · layer | 529×476 | 1.11:1 | **1.34** | 14.7px | 2.01px | 2 | x：层 0 = 95 / 层 1 = 395，单调 |
+| 字段级整表 29 节点 · dagre | 1961×339 | 5.8:1 | 0.33 | — | — | — | — |
+| 字段级整表 29 节点 · layer | 1283×1154 | 1.11:1 | **0.55** | — | — | — | — |
+
+像素侧复核：表级画布非背景像素占比 **29.5%**（层 0 底色 71134px / 层 1 底色 50100px / 边 1634px）——图是真的画在框里，不是"接口有数据但画布空着"。
+
+**代价**：dagre.min.js(283803B) 与 cytoscape-dagre.js(12665B) 及其两份 LICENSE 从 `vendor/` 删除，vendored 依赖只剩 cytoscape 一件。节点尺寸从此由 `graph.js` 手工维护，加节点形态要顺手确认 `sizeAlong/sizeCross` 取到的样式值。
+
+### 8.8 试解析入图：贴 SQL → 中栏画出血缘（2026-09-22）
+
+改造前「试解析」只出左栏文字卡片，用户要自己从卡片里读出表名再去图里找——`POST /api/parse` 的响应里本来就有 `graph`（未落快照的临时大图）和 `columnEdges`，只是没画。
+
+**分层**：`js/parsed.js` 是唯一的新模块，职责是把 `/api/parse` 的 payload **适配成快照视图的形状**，`graphTable.js` / `graphColumn.js` / `detailPanel.js` 因此一行未改：
+
+- `parsedTableDetail(payload, table)` → 与 `/api/table/{t}/columns` 同形的 `{table,name,layer,local,columns[]}`（每列的 `sourceCount`/`consumerCount` 由 `columnEdges` 现数）。
+- `parsedColumnsView(payload)` → 端点集去重成 `{nodes:[{id,name,table,layer,local:false}], edges:[…]}`，`layer` 取其所属表的层，于是 §8.7 的布局对临时图同样成立。
+- `parsedColumnDetail(payload, columnId)` → `{sources[],consumers[]}`，并给每条边补 `sqlText = payload.rawSql`（`main.js` 在发起时把原始输入挂到 `state.parse.rawSql`），右栏的原文高亮才有东西可高亮。
+- **中间关系（CTE/子查询）不进临时图**：`/api/parse.graph` 已经把它们折掉了，前端再从 `columnEdges` 反解一遍只会和快照口径打架；要看逐跳证据仍在边的 `hops` 里。
+
+**状态机**：`state.view` 增 `parsed-table` / `parsed-column` 两态，`state.parse` 存 payload、`state.parsedColumn` 存选中的临时列。三条不变量：
+
+1. **临时视图不写 hash**。`#view=parsed-*` 刷新即失效（payload 只在内存），分享出去的链接必然坏，所以视图页签点击时 `if (!view.startsWith('parsed-')) syncHash()`。重扫目录会清空 `state.parse` 并退回表级。
+2. **选区互斥**。点左栏任意表/列（`selectTable`/`selectColumn`/`resetSelection`）先 `leaveParsed()` 回快照视图，避免"右栏是快照字段清单、画布是临时图"的错配。
+3. **空 payload 不画空图**。没解析过就点到禁用外的入口（手工改 hash、解析失败残留）→ `switchView('table')` 后重新 `refresh()`。
+
+两个新页签在未解析时 `disabled`（`.tabs button:disabled` 走 `--dimmer` + `cursor:not-allowed`，`.tabs` 加 `flex-wrap:wrap` 防四个页签挤爆），进入临时视图时右栏明确提示「这张图来自输入框里的 SQL」，图例同样带这句话——不让用户把试解析当成已落库的事实。
+
+**实测**（合成 2 条语句、5 张表、4 条表边、7 条折叠后字段边）：解析后中栏 3 层单调（仿真框内 y = 17 / 131 / 245）、zoom 2.22；点表节点 → 右栏 4 行字段清单 + `hot` 描边；「试解析·字段」→ 11 节点 / 7 边、图例 11 项；点列 `dt` → 标题 `dt（t_order_sel）`、SQL 原文 4 处 `<mark>`、`EXPRESSION · 表达式` 徽标；点字段边 → `ods.kafka_order.order_id → dwd.t_order_sel.order_id：命中 1 条边` + 3 处高亮 + 粘贴的原文。点左栏列表项退回快照（标题 `表级链路：user_app_data`），翻回临时页签 payload 仍在，`location.hash` 全程没出现过 `parsed`。
+
 ## 9. 里程碑与工作量
 
 | 阶段 | 内容 | 验收 | 估时 |
@@ -619,7 +672,7 @@ src/main/resources/static/
 | **M1 列级解析核心** | ✅ 已完成：`ColumnRef/ColumnEdge` + `QueryScope` 栈 + 三方言共用一份 `ColumnLineageEngine` | 207 测试全绿；语料 2376 条列边，幽灵列/UNRESOLVED/STAR 均 0 | 2d |
 | **M2 归一化/图模型** | ✅ 已完成：`ColumnGraphBuilder` 折叠 + `ColumnEdge.targetInternal` 标记、`LocalRelation` 语句命名空间、`LayeredDagBuilder`（迭代 Tarjan+Kahn）、`LineageStore` 快照 | 228 测试全绿（新增 21）：环/自依赖、20000 节点长链、多 CTE 同名、别名解引用、hop 证据；全语料建图 17 节点/2329 列边/0 未折叠伪节点/0 缺层号 | 1d |
 | **M3 服务层** | ✅ 已完成：starter-web 2.7.18 + `CorpusScanner`（jobId=文件#序号）+ `ScanReport` 账本 + 9 个端点 + `ApiResponse`/`ApiErrorAdvice` + `spring-boot-maven-plugin`（无需 profile，见 §7.1）。实测细节见 §7.4 | 245 测试全绿（新增 17）；真起 jar 逐端点 `curl` 通过，overview 与 M2 基线逐项一致；0 条折叠告警；无 slf4j 双绑定 | 1d |
-| **M4 前端** | ✅ 已完成：vendor 三件套（cytoscape 3.32.1 + dagre 0.8.5 + cytoscape-dagre 2.5.0）+ 三栏 ES module（`main/api/graphTable/graphColumn/detailPanel/badges`）+ 表级 DAG 与字段链路两种图 + 右栏逐跳证据（hops/derivation/confidence/SQL 高亮/parseError 红条）+ PNG 与子图 JSON 导出 + hash 定位。实测细节见 §8.4 | `mvn -o clean test` **246 绿**；jar 内 static 21 文件、`GET /` 200；真浏览器（browser-use）表级/字段级金路径 + 300 节点超限 + 缺列 400 + parseError 红条 + 星号/未解析边界逐项通过，console 零 error；揪出 7 个前端缺陷与 1 处"把解析缺口说成链路起点"的语义谎言 | 2d |
+| **M4 前端** | ✅ 已完成：vendor 三件套（cytoscape 3.32.1 + dagre 0.8.5 + cytoscape-dagre 2.5.0）+ 三栏 ES module（`main/api/graphTable/graphColumn/detailPanel/badges`）+ 表级 DAG 与字段链路两种图 + 右栏逐跳证据（hops/derivation/confidence/SQL 高亮/parseError 红条）+ PNG 与子图 JSON 导出 + hash 定位。实测细节见 §8.4。**（dagre 双包已在 §8.7 下线，vendored 只剩 cytoscape；试解析入图见 §8.8）** | `mvn -o clean test` **246 绿**；jar 内 static 21 文件、`GET /` 200；真浏览器（browser-use）表级/字段级金路径 + 300 节点超限 + 缺列 400 + parseError 红条 + 星号/未解析边界逐项通过，console 零 error；揪出 7 个前端缺陷与 1 处"把解析缺口说成链路起点"的语义谎言 | 2d |
 | **M5 语料回归** | ✅ 已完成：子查询身份（别名只做查找键，`#subN` 才是身份）+ 无参关键字函数与 lambda 形参不再当列（§6）。实测细节与逐条定性见 §11.1 | 涉密语料：折叠告警 62→**0**、未折叠伪节点 0、幽灵列 0、UNRESOLVED 7→**2**（两条都是 CASE ELSE 的未限定列，两张未知表 ⇒ 按"宁缺勿假"口径保留，`ambiguousUnqualifiedColumnIsNotForcedOntoATable` 已锁这个语义）；`sql/` 基线：2376 原始列边不变，图列边 2329→**2327**（4 处 `current_timestamp` 假来源），0 告警。`mvn -o clean test` **252 绿** | 1d |
 | **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4、§2.0.5）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理，`superior-sql-parser-temp/` 按你确认删除（代价与教训记在 §2.0.4 末段），与血缘无关的编译日志/一次性脚本/MySQL 建表脚本再删一批。**无遗留待办**：`column_lineage` DDL 随"不落库"结论一起取消（§10） | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线；`sql/` 语料 0 解析错误 | 0d |
 
@@ -670,6 +723,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - 语料：`sql/` 16 文件跑列级 JSON 导出工具（新建 `SqlDirColumnLineageTool`，与 `SqlDirLineageTool.java:24-110` 并列**不改它**），人工巡检 TOP 未解析边。
 - Web（M3 已按此执行）：`GraphAssemblerTest`/`CorpusScannerTest` 钉住裁剪与扫描器契约，9 个端点全部真起 jar 用 `curl` 冒烟（见 §7.4）。`@WebMvcTest`/`@SpringBootTest` 都依赖 `spring-boot-test`+`spring-test`，**离线仓库一个版本都没有**，不要计划走这条路。
 - 前端：**真实浏览器点一遍**（M4 验收），不做"我以为能渲染"的声明。
+- 前端静态完整性（`web/StaticAssetIntegrityTest`，4 例）：没有构建步骤就没有编译器兜底，所以在 JUnit 里扫 `static/` 下的 JS——块注释逐字符配对（防 §8.8 那次让整站白屏的 `*/`）、`import './x.js'` 目标存在、`index.html` 的 `src`/`href` 资源存在、`getElementById` 的 id 在 DOM 里存在。四类失效都是"Java 测试全绿、页面全白"，只能这样钉住。
 - 构建纪律（既有记忆约束）：报"通过"之前必 `mvn clean test`，不信陈旧 `target/`。
 - 涉密语料纪律：任何来自 `D:\ai coding\...` 的 SQL 只在 git 忽略的 `tmpdb/` 复现，**不复制进仓库、不写进用例、不提交**；提交前删除 `tmpdb/`（本分支截至 2026-09-21 已清空，M5 复现时重新拷贝）。
 
@@ -730,8 +784,8 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 
 ## 14. 验收标准（可打勾）
 
-- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **255/255**（M6 收尾 254 + 「有字段的表」只数物理表 1，见 §11.1）+ boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
-- [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ dagre 实跑，17 节点分层见 §8.4。画布像素也已核到（屏外渲染取 `cy.png()` 再数色，方法见 §8.6）；剩下"人眼觉得好不好看"这一条只能由使用者判。
+- [x] 1. **基线（M6 收尾后）**：`mvn -o clean package` **255/255**（M6 收尾 254 + 「有字段的表」只数物理表 1，见 §11.1；§8.7/§8.8 这轮再加 4 例静态资产检查 = **259**）+ boot jar 可执行、`run-lineage.bat sql` **15 文件 / 14 输出表 / 0 WARN**（原为 16/17/3，那 3 条 MySQL 建表 DDL 已随 §2.0.5 删出语料）、图列边 2327、0 折叠告警、`grep -r "org.apache.flink" src` 为空。功能落地后用例数只增不减，且这几条不被破坏。
+- [x] 2. 起服务（`java -jar target/flinkLearn-0.0.1-SNAPSHOT.jar`，或 `mvn -o spring-boot:run`）后浏览器打开 `http://localhost:8080`，能看到按层排布的表级 DAG。→ 初版由 dagre 实跑（§8.4），但"看得到"不等于"看得清"：稀疏语料下它把图摊成 8:1、fit 到 0.39 缩放，实测被判定为"表血缘没有显示"。现已改为按 `layer` 自算，层序单调、fit 1.34，数字见 §8.7。画布像素也已核到（屏外渲染取 `cy.png()` 再数色，方法见 §8.6）；剩下"人眼觉得好不好看"这一条只能由使用者判。
 - [x] 3. 点击任一有列级信息的表 → 字段链路图渲染出 2 跳以上链路（中间节点在 hops 里显形）：`kafka_user_app_data.eventbodylist → [ck/user_app_data_ck_dml.sql#1]#unnest1.app_name → user_app_data.app_name`。
 - [x] 4. 选中字段边 → 右栏显示逐跳链路、derivation/confidence、原始 SQL 片段高亮，三者信息一致（`85%（EXPRESSION）` 对 `confidence:0.85`，3 处 `<mark>` 对两端列名）。
 - [x] 5. `SELECT *` 边显示 `STAR · 星号未展开` 徽标 + 图例色块 + 30% 置信度；`UNRESOLVED` 边在 `/api/issues`、左栏质量过滤、字段清单徽标与右栏红条四处都可见——第 3、4 处是本轮补验时才修出来的，见 §8.4。
@@ -739,3 +793,5 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - [x] 7. 本方案入库为 `outputs/` 下唯一现行设计文档；两份旧 Calcite 路线文档已删除，作废理由保留在 §0。
 - [x] 8. 空快照必须自己说清是哪一种：**没在扫 / 扫失败（目录指错）/ 扫到 0 个 .sql / 跳过启动扫描**四态在页面上可区分，且 `running` 态会在 60s 内轮询自愈成图（`/api/overview` 的 `scanPhase`/`scanError` + 顶部横幅，实测见 §8.5）。
 - [x] 9. 深色仪器台（§8.6）：样式与交互层改完，**REST 契约与解析层零改动**（`mvn -o clean test` 255 绿）；调色板一处定义、CSS 与画布同源，图例由 `EDGE_STYLE` 生成——本视图里出现的每种边色都在画布上数得到像素、没出现的为 0px，选中态像素 0→1256→0 可打可消。
+- [x] 10. 布局按 `layer`（§8.7）：`sql/` 语料的表级图 fit 后缩放 ≥1、层号与图上左右次序单调一致、图例不再有说谎项；dagre 两个包与其 LICENSE 已从 `vendor/` 删除，`index.html` 只剩一处 script 依赖。**不得**再引回第三方布局引擎。
+- [x] 11. 试解析入图（§8.8）：页面贴 SQL → 中栏画出血缘，点表出字段清单、点字段边出逐跳证据与原文高亮；临时视图不写 hash、点左栏即退出、重扫即清空；`/api/parse` 之外零新增端点，快照四态与 §7.3 契约不变。

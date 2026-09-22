@@ -326,6 +326,7 @@ input::placeholder { color: var(--dimmer); }
   top: 0;
   z-index: 4;
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
@@ -344,6 +345,14 @@ input::placeholder { color: var(--dimmer); }
 }
 
 .tabs button:hover { color: var(--txt-strong); border-color: var(--line-strong); box-shadow: none; }
+
+/* 中栏的「试解析」两个页签在解析成功前是灰的：没有临时 payload 就没东西可画 */
+.tabs button:disabled,
+.tabs button:disabled:hover {
+  color: var(--dimmer);
+  border-bottom-color: transparent;
+  cursor: not-allowed;
+}
 
 .tabs button.active {
   color: var(--acid);
