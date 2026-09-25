@@ -411,6 +411,8 @@ input::placeholder { color: var(--dimmer); }
 
 .list .name { font: 500 13px/1.35 var(--font-mono); color: var(--txt-strong); word-break: break-all; }
 .list .meta { color: var(--dim); font-size: 11px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* 模型登记了、预算没让它上画布：右栏要说得出这句差 */
+.list .dim { color: var(--dimmer); font-style: italic; }
 
 /* 层号色板：把 layerColor() 的语义铺在列表里，图例就不用只挂在图上 */
 .dot { width: 7px; height: 7px; border-radius: 1px; flex: none; box-shadow: 0 0 6px -1px currentColor; }
@@ -510,6 +512,51 @@ input::placeholder { color: var(--dimmer); }
   inset: 0;
   pointer-events: none;
   background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .02) 0 1px, transparent 1px 3px);
+}
+
+/* 字段行的跟随式动作条：贴在点中的那一格旁边。
+   底色用 --ink-2 而不是半透明——它压在线条上，透过去就会和边糊成一片。 */
+.pop {
+  position: absolute;
+  z-index: 3;
+  min-width: 214px;
+  max-width: 274px;
+  padding: 7px 9px 8px;
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--acid);
+  background: var(--ink-2);
+  box-shadow: var(--shadow);
+  font-family: var(--font-mono);
+}
+
+.pop-title {
+  margin: 0 0 6px;
+  color: var(--txt-strong);
+  font-size: 11.5px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.pop-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.pop-tools button {
+  font-size: 11px;
+  padding: 3px 7px;
+}
+
+.pop-tools .close {
+  margin-left: auto;
+  padding: 3px 6px;
+  color: var(--dim);
+}
+
+.pop-tools .close:hover {
+  color: var(--red);
 }
 
 .legend {

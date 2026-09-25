@@ -14,25 +14,11 @@ const NODE_FONT_PX = 11;
 const MIN_LABEL_PX = 10;
 
 /**
- * 字段视图的"表盒 + 列行"尺寸。
+ * 画盒子/列行的那套 kind（字段视图用），其余（表级图）走通用外观。
  *
- * 盒子不是 cytoscape 的 compound 父节点：它的宽高由行数算出来直接写进样式，
- * 列行是同层级的普通节点、由 stackRows() 摆进盒子里。自算布局本来就掌握全部坐标，
- * 用 compound 反而要把坐标换成"相对父节点"的口径，还要跟父框自动外扩较劲。
- *
- * 表名也不写在盒子上：写在盒子上的字要么压住第一行列行，要么靠 text-margin-y 猜位置。
- * 改成盒子顶部一条实色"标题行"节点，色块自己就是分隔线。
+ * 盒与行的尺寸不在这里：字段的坐标、盒高、行距一律由 /api/sqlflow/graph 算好下发，
+ * 前端再算一份就是两份会走样的真相（见 sqlflowView.js）。
  */
-export const BOX_W = 178;
-/** 行距（pitch）：比行色块高，多出来的缝让相邻两行不至于糊成一片 */
-export const ROW_H = 20;
-export const ROW_BOX_H = 17;
-export const HEADER_H = 24;
-export const BOX_PAD = 8;
-export const ROW_W = BOX_W - 14;
-export const HEADER_W = BOX_W - 6;
-
-/** 画盒子/行的那套 kind，其余（表级图）走通用外观 */
 const BOX_KINDS = '[kind="tableBox"], [kind="hopBox"]';
 
 export function create(el) {
@@ -78,7 +64,7 @@ export function create(el) {
           shape: 'rectangle',
           'font-weight': 700,
           'text-wrap': 'ellipsis',
-          'text-max-width': `${HEADER_W - 10}px`,
+          'text-max-width': '150px',
           'background-opacity': 1,
           'overlay-opacity': 0,
           'z-index': 3,
@@ -89,7 +75,7 @@ export function create(el) {
         style: {
           shape: 'rectangle',
           'text-wrap': 'ellipsis',
-          'text-max-width': `${ROW_W - 8}px`,
+          'text-max-width': '150px',
           'background-opacity': 1,
           'overlay-opacity': 0,
           'z-index': 2,
@@ -155,11 +141,10 @@ export function nodePaint(node) {
     return;
   }
   if (kind === 'columnRow') {
-    const note = !!node.data('capped');
     node.style({
-      'background-color': note ? ink.boxFill : ink.rowFill,
-      color: note ? ink.localText : ink.rowText,
-      'border-width': note ? 0 : 1,
+      'background-color': ink.rowFill,
+      color: ink.rowText,
+      'border-width': 1,
       'border-style': 'solid',
       'border-color': ink.rowLine,
       'border-opacity': 1,
@@ -216,7 +201,7 @@ function num(value) {
   return parseFloat(value) || 0;
 }
 
-/** 按 layer 分列：层号缺失一律按第 0 层，非整数层（中间跳占位）自成一列 */
+/** 按 layer 分列：层号缺失一律按第 0 层 */
 function groupByLayer(nodes) {
   const columns = new Map();
   nodes.forEach((node) => {
@@ -232,11 +217,8 @@ function groupByLayer(nodes) {
 /**
  * 同层内的行序：按"已排定的前一层邻居"的平均行号排（重心法一趟）。
  * 前一层没排过的节点（链路起点、孤岛、同层入边）留在原位，不打乱已有顺序。
- *
- * peers 是盒子视图给的"上游盒"表：字段视图的边连的是行，盒与盒之间没有边，
- * 直接走 incomers() 会把行当成邻居、把盒当成孤岛，重心全丢。
  */
-function orderWithinColumns(columns, peers) {
+function orderWithinColumns(columns) {
   const row = new Map();
   columns.forEach((group, index) => {
     const ranked = group
@@ -244,9 +226,7 @@ function orderWithinColumns(columns, peers) {
         if (index === 0) {
           return { node, key: position };
         }
-        const sources = peers
-          ? [...(peers.get(node.id()) || [])]
-          : node.incomers('node').map((prev) => prev.id());
+        const sources = node.incomers('node').map((prev) => prev.id());
         const before = sources.filter((id) => row.has(id)).map((id) => row.get(id));
         return {
           node,
@@ -256,54 +236,6 @@ function orderWithinColumns(columns, peers) {
       .sort((a, b) => a.key - b.key);
     ranked.forEach((entry, position) => row.set(entry.node.id(), position));
     group.splice(0, group.length, ...ranked.map((entry) => entry.node));
-  });
-}
-
-/** 行级边折算成盒级邻接：重心法要的是"我这盒的上游有哪些盒" */
-function boxPeers(cy) {
-  const owner = new Map();
-  cy.nodes('[kind="columnRow"], [kind="headerRow"]').forEach((node) => {
-    owner.set(node.id(), node.data('box'));
-  });
-  const upstream = new Map();
-  cy.edges().forEach((edge) => {
-    const from = owner.get(edge.data('source'));
-    const to = owner.get(edge.data('target'));
-    if (!from || !to || from === to) {
-      return;
-    }
-    if (!upstream.has(to)) {
-      upstream.set(to, new Set());
-    }
-    upstream.get(to).add(from);
-  });
-  return upstream;
-}
-
-/** 盒子落位后把标题行和列行填进去：行坐标由盒子的左上角推，不指望布局顺手摆 */
-function stackRows(cy) {
-  const byBox = new Map();
-  const push = (node) => {
-    const id = node.data('box');
-    if (!byBox.has(id)) {
-      byBox.set(id, []);
-    }
-    byBox.get(id).push(node);
-  };
-  cy.nodes('[kind="headerRow"]').forEach(push);
-  cy.nodes('[kind="columnRow"]').forEach(push);
-  cy.nodes(BOX_KINDS).forEach((box) => {
-    const members = byBox.get(box.id()) || [];
-    const top = box.position('y') - num(box.style('height')) / 2;
-    members
-      .sort((a, b) => num(a.data('order')) - num(b.data('order')))
-      .forEach((node) => {
-        const band = node.data('kind') === 'headerRow'
-          ? top + HEADER_H / 2
-          : top + HEADER_H + (num(node.data('order')) - 1) * ROW_H + ROW_BOX_H / 2;
-        node.position('x', box.position('x'));
-        node.position('y', band);
-      });
   });
 }
 
@@ -364,16 +296,15 @@ function place(columns, direction) {
  * 而且下游节点会排到上游左边，跟"第几层"图例直接矛盾。层号本来就是这套图的语义。
  * 朝向按容器实际尺寸挑：谁的 fit 缩放大就用谁，避免长条图被压成一条线。
  *
- * 字段视图排的是盒子（一表一盒），行列由 stackRows() 填进各自盒子里；
- * 没有盒子时（表级图）排的就是节点本身。
+ * 只管表级图：字段视图的坐标整个由 /api/sqlflow/graph 算好（见 sqlflowView.js），
+ * 在这里再排一次就是两份会走样的真相。
  */
 export function runLayout(cy) {
-  const boxes = cy.nodes(BOX_KINDS);
-  const columns = groupByLayer(boxes.length ? boxes : cy.nodes());
+  const columns = groupByLayer(cy.nodes());
   if (!columns.length) {
     return;
   }
-  orderWithinColumns(columns, boxes.length ? boxPeers(cy) : null);
+  orderWithinColumns(columns);
   const container = { w: cy.width(), h: cy.height() };
   const zoomOf = (direction) => {
     const box = measure(columns, direction);
@@ -385,36 +316,17 @@ export function runLayout(cy) {
   const horizontal = zoomOf('LR');
   const vertical = zoomOf('TB');
   place(columns, Number.isFinite(vertical) && vertical > horizontal ? 'TB' : 'LR');
-  if (boxes.length) {
-    stackRows(cy);
-  }
 }
 
 export function replace(cy, elements) {
   cy.elements().remove();
   cy.add(elements);
   cy.nodes().forEach((node) => {
-    const kind = node.data('kind');
-    if (kind === 'tableBox' || kind === 'hopBox') {
-      node.style({
-        width: BOX_W,
-        height: HEADER_H + (node.data('rows') || 0) * ROW_H + BOX_PAD,
-      });
-      return;
-    }
-    if (kind === 'headerRow') {
-      node.style({ width: HEADER_W, height: HEADER_H - 4 });
-      return;
-    }
-    if (kind === 'columnRow') {
-      node.style({ width: ROW_W, height: ROW_BOX_H });
-      return;
-    }
     // 宽度必须按"真正画出来的那个串"算：标签样式表取的就是 data(label)，
-    // 按短名算宽度却画全名（字段视图两边差的正是表前缀），字就溢出色块压到邻居身上。
+    // 按短名算宽度却画全名，字就溢出色块压到邻居身上。
     const label = node.data('label') || node.data('id');
     node.style('width', Math.min(190, 12 + label.length * 6.4));
-    node.style('height', kind === 'column' ? 24 : 34);
+    node.style('height', 34);
   });
 }
 
@@ -427,7 +339,9 @@ export function replace(cy, elements) {
  * 超出容器的部分交给拖动画布（minZoom 仍允许用户自己缩回去看整体形状）。
  */
 export function fit(cy) {
-  const nodes = cy.nodes();
+  /* 只看露在外面的那些：字段视图裁剪之后盒子和行是 display:none，
+     拿它们算字号基准和"放不下多少个"会报出一个用户根本没看见的数字。 */
+  const nodes = cy.nodes(':visible');
   if (!nodes.length) {
     return { zoom: cy.zoom(), cramped: false, warning: '' };
   }
@@ -435,7 +349,7 @@ export function fit(cy) {
      cy.width() 照旧报 500x300，只有显式 resize() 才刷新）。fit 读的就是这个缓存，
      所以每次 framing 前自己去刷一遍——否则缩放和"装不下"的结论都是对着旧盒子算出来的。 */
   cy.resize();
-  cy.fit(undefined, FIT_PADDING);
+  cy.fit(nodes, FIT_PADDING);
   /* 可读下限按"最小的那个有字的节点"算：字段视图里盒子不写字，拿 nodes[0]（通常是盒子）
      来定字号等于用空气做基准。 */
   let fontPx = Infinity;
@@ -452,7 +366,7 @@ export function fit(cy) {
     return { zoom: cy.zoom(), cramped: false, warning: '' };
   }
   cy.zoom(floor);
-  const box = cy.elements().boundingBox();
+  const box = nodes.boundingBox();
   cy.pan({ x: FIT_PADDING - box.x1 * floor, y: FIT_PADDING - box.y1 * floor });
   const canvas = `${Math.round(cy.width())}x${Math.round(cy.height())}`;
   // 报"多少个"要报用户眼里的那个数：字段视图的盒体和空盒子不算信息量

@@ -189,6 +189,17 @@ public final class GraphAssembler {
                 links, tables, columns);
     }
 
+    /**
+     * 字段标识：把用户给的表名/列名（大小写、短名都认）换算成图里登记的 {@code table.column}。
+     *
+     * <p>单独开一个入口是因为服务端布局要按"这一列"决定谁留在盒子里，而那必须先拿到图内口径的
+     * 标识——自己拼字符串就会拼出两种大小写：图里一种，请求里一种，焦点永远对不上。
+     */
+    public static String columnId(LineageGraph graph, String table, String column) {
+        String full = requireTable(graph, table);
+        return ColumnLink.columnId(full, requireColumn(graph.getNode(full), column));
+    }
+
     /** 列名大小写不敏感，但返回图里登记的写法：图内标识已归一化，不能把用户的大小写拼进 id */
     private static String requireColumn(GraphNode node, String column) {
         String name = column.trim();

@@ -11,6 +11,8 @@ import com.bigdata.lineage.parser.model.ColumnDerivation;
 import com.bigdata.lineage.parser.model.TableLineage;
 import com.bigdata.lineage.web.CorpusScanner;
 import com.bigdata.lineage.web.GraphAssembler;
+import com.bigdata.lineage.web.sqlflow.SqlFlowAssembler;
+import com.bigdata.lineage.web.sqlflow.SqlFlowContext;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -215,6 +217,73 @@ public class LineageApiController {
                 GraphAssembler.Direction.BOTH, 1).tableView());
         data.put("columnEdges", edges);
         return ApiResponse.ok(data);
+    }
+
+    /**
+     * 字段级血缘：一次调用给全"数据模型 + 布局 + 统计"。
+     *
+     * <p>与 {@code /api/graph/column} 的分工：那个端点是给通用图浏览器用的抽象节点集，布局留在
+     * 前端；这一个把盒子和每一行的坐标都算好了，前端只照坐标画。字段级血缘的形状（一表一盒、
+     * 盒里一行一列、中间站显形）本来就不是通用图能表达的东西，与其让前端再推一遍，不如服务端
+     * 一次说清。不传 table 就是整个快照的字段边——超出可画规模时 {@code metaInfo.drawn=false}，
+     * 模型和统计照给，只给告警不画。
+     *
+     * @param focus 聚焦列标识（图内口径），只影响"哪个字段永远留在盒子里"
+     */
+    @GetMapping("/sqlflow/graph")
+    public ApiResponse sqlflowGraph(@RequestParam(required = false) String table,
+                                    @RequestParam(required = false) String column,
+                                    @RequestParam(required = false) String focus,
+                                    @RequestParam(required = false) String depth) {
+        LineageStore.Snapshot snapshot = store.current();
+        LineageGraph graph = snapshot.getGraph();
+        List<ColumnLink> links;
+        String pointed = focus;
+        if (table == null || table.trim().isEmpty()) {
+            links = new ArrayList<>(graph.getColumnLinks());
+        } else {
+            links = GraphAssembler.columnSubgraph(graph, table, column,
+                    GraphAssembler.clampDepth(depth, 3)).getColumnLinks();
+            if (column != null && !column.trim().isEmpty()) {
+                pointed = GraphAssembler.columnId(graph, table, column);
+            }
+        }
+        return ApiResponse.ok(SqlFlowAssembler.payload(SqlFlowContext.of(snapshot), links, pointed));
+    }
+
+    /**
+     * 页面贴的 SQL 直接出字段级血缘图：口径与 {@code /api/sqlflow/graph} 完全一致，
+     * 只是图来自这一次解析而不是当前快照。
+     *
+     * <p>语句原文必须一起登记：布局能算，SQL 高亮的行列号却只有调用方拿得到（它才有逐语句结果）。
+     */
+    @PostMapping("/sqlflow/graph")
+    public ApiResponse sqlflowParse(@RequestBody Map<String, String> body) {
+        String sql = body == null ? null : value(body, "sqltext", "sql");
+        if (sql == null || sql.trim().isEmpty()) {
+            return ApiResponse.fail("sqltext 不能为空");
+        }
+        List<TableLineage> statements = probeParser.extractTableLineages(sql, false);
+        LineageGraph graph = ColumnGraphBuilder.build(statements);
+        Map<String, String> sqlByJob = new LinkedHashMap<>();
+        Set<String> parseErrors = new LinkedHashSet<>();
+        for (int i = 0; i < statements.size(); i++) {
+            TableLineage statement = statements.get(i);
+            String jobId = ColumnGraphBuilder.jobIdOf(statement, i);
+            sqlByJob.put(jobId, statement.getOriginalSql());
+            if (statement.isParseError()) {
+                parseErrors.add(jobId);
+            }
+        }
+        SqlFlowContext context = SqlFlowContext.adhoc("试解析", graph, sqlByJob, parseErrors);
+        String focus = body.get("focus");
+        return ApiResponse.ok(SqlFlowAssembler.payload(context, graph.getColumnLinks(), focus));
+    }
+
+    /** 键名兼容：{@code sqltext} 是对方的叫法，{@code sql} 是我们已有端点的叫法，认第一个命中的 */
+    private static String value(Map<String, String> body, String primary, String fallback) {
+        String hit = body.get(primary);
+        return hit == null || hit.trim().isEmpty() ? body.get(fallback) : hit;
     }
 
     /** 重扫目录并原子换快照 */

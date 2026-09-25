@@ -1,19 +1,22 @@
 /**
  * 三栏血缘 UI 的装配层：状态机 + 事件绑定。
  *
- * 这里不直接 fetch（全部走 api.js），也不画节点（走 graphTable/graphColumn），
+ * 这里不直接 fetch（全部走 api.js），也不画节点（走 graphTable/sqlflowView），
  * 只负责"点了一下之后该重新取哪个接口、右栏显示什么"。
  */
 import { api } from './api.js';
 import { create, setHot, watchResize } from './graph.js';
-import { drawColumns } from './graphColumn.js';
 import { drawTable } from './graphTable.js';
+import { parsedTableDetail } from './parsed.js';
 import {
-  parsedColumnDetail,
-  parsedColumnsView,
-  parsedTableDetail,
-  tableOf,
-} from './parsed.js';
+  columnCard,
+  entityCard,
+  evidenceOfEdge,
+  indexSqlFlow,
+  rowIdOfColumnId,
+} from './sqlflowModel.js';
+import { createPop } from './sqlflowPop.js';
+import { paintSqlFlow } from './sqlflowView.js';
 import { EDGE_STYLE, derivationLabel, ink, layerColor } from './badges.js';
 import {
   renderColumn,
@@ -42,6 +45,7 @@ const ui = {
   parseSql: document.getElementById('parse-sql'),
   parseOut: document.getElementById('parse-out'),
   legend: document.getElementById('legend'),
+  pop: document.getElementById('sqlflow-pop'),
   scanError: document.getElementById('scan-error'),
   scanDir: document.getElementById('scan-dir'),
   status: document.getElementById('status'),
@@ -54,8 +58,6 @@ const state = {
   view: 'table',
   table: null,
   column: null,
-  /** 当前表的字段清单：点字段节点时优先复用，省一次往返 */
-  columns: null,
   /** 最近一次下发的子图 JSON，导出与调试用 */
   payload: null,
   /** /api/overview 给的最大层号，图例按它画色块 */
@@ -66,9 +68,41 @@ const state = {
   parsedColumn: null,
   /** 这一次画图本身要交代的退化说明（多少列没画、多少段链路没显示） */
   modelWarning: '',
+  /** 字段视图这一份响应：{index, view}，右栏与浮层的证据都从这里查，不再打第二个端点 */
+  sqlflow: null,
+  /** 浮层现在贴在哪个字段行上：{rowId, columnId, entityId} */
+  popTarget: null,
 };
 
 const cy = create(ui.graph);
+
+const pop = createPop(ui.pop, {
+  /** "只看这一列"是纯客户端裁剪：画布上已有的边就是这次请求的全部结论 */
+  chain: guard(() => {
+    if (state.popTarget && state.sqlflow) {
+      state.sqlflow.view.crop(state.popTarget.rowId);
+      showPop(state.popTarget.rowId);
+    }
+  }),
+  columns: guard(() => {
+    if (state.popTarget && state.sqlflow) {
+      listEntity(state.popTarget.entityId);
+    }
+  }),
+  reset: guard(() => {
+    if (state.sqlflow) {
+      showWarning(state.sqlflow.view.reset());
+    }
+    pop.hide();
+  }),
+});
+
+/* 浮层跟着画布走：pan/zoom 之后原来的屏幕坐标就作废了 */
+cy.on('pan zoom drag', () => {
+  if (pop.visible() && state.popTarget) {
+    placePop(state.popTarget.rowId);
+  }
+});
 
 /* 取数在 await 处会让出线程，慢的那次不能盖掉后点的：画之前比序号，过期就收手。 */
 let renderSeq = 0;
@@ -82,7 +116,12 @@ let renderSeq = 0;
  * 画布明明只画了 28 行，页面却一句话都不说。
  */
 function showWarning(result) {
-  state.modelWarning = result.modelWarning || '';
+  /*
+   * 裁剪是画布当前的状态，不是图本身的说明：浮层收起后（点画布空白）用户只剩一堆重排过的盒子，
+   * 标题却还写着"全部字段"。所以 cropped 必须跟着进这一行，复位后自然消失。
+   */
+  state.modelWarning = [result.modelWarning,
+    result.cropped ? '当前只画选中字段的通路（点浮层「复位」还原整片）' : ''].filter(Boolean).join('；');
   paintFraming(result.framing);
 }
 
@@ -111,17 +150,6 @@ function depth() {
 
 function direction() {
   return state.table ? ui.direction.value : '';
-}
-
-/**
- * 图里的列标识是 {@code table.column}，而 /api/graph/column 的 column 参数是裸列名。
- * 先按已知表名剥前缀：伪关系标识（[job]#unnest.col）也走这条路，不靠末段猜测。
- */
-function columnNameOf(columnId, table) {
-  const prefix = `${table}.`;
-  return columnId.startsWith(prefix)
-    ? columnId.slice(prefix.length)
-    : columnId.slice(columnId.lastIndexOf('.') + 1);
 }
 
 /* ---------------- 顶栏 ---------------- */
@@ -297,6 +325,7 @@ async function loadIssues() {
 }
 
 async function runParse() {
+  const seq = ++renderSeq;
   ui.parseOut.textContent = '';
   const sql = ui.parseSql.value;
   if (!sql.trim()) {
@@ -305,6 +334,9 @@ async function runParse() {
   }
   try {
     const data = await api.parse(sql);
+    if (seq !== renderSeq) {
+      return;
+    }
     data.rawSql = sql;
     state.parse = data;
     state.parsedColumn = null;
@@ -335,12 +367,26 @@ function setGraphTitle(text) {
   ui.title.title = text;
 }
 
+/**
+ * 换到表级画法之前，把字段级留下的浮层与裁剪句柄一起清掉。
+ *
+ * 浮层是挂在 .canvas 上的 DOM，不随 cytoscape 的元素消失；留着它而 state.sqlflow.view
+ * 还指向上一份图，点「只看这一列」就会拿旧行号去裁新图——新图上谁也找不到，
+ * 于是整张画布被 display:none 掉（实测踩过：白屏 + 一句过期的告警）。
+ */
+function dropSqlFlow() {
+  state.sqlflow = null;
+  state.popTarget = null;
+  pop.hide();
+}
+
 async function drawTableGraph(seq) {
   const view = await api.tableGraph({ root: state.table, direction: direction(), depth: depth() });
   if (seq !== renderSeq) {
     return;
   }
   state.payload = view;
+  dropSqlFlow();
   // 图例和标题都在画图之前落 DOM：它们是 #graph 的兄弟节点，晚写一步就把画布压矮，
   // 而 fit 是按当时的容器尺寸算缩放的——实测过 fit 完 516x288、图例渲染后只剩 501x202。
   setGraphTitle(state.table
@@ -361,6 +407,7 @@ async function drawTableGraph(seq) {
 async function drawParsedTable() {
   const view = state.parse.graph;
   state.payload = view;
+  dropSqlFlow();
   setGraphTitle(`试解析·表级（未入快照，${(view.nodes || []).length} 表 / ${(view.edges || []).length} 边）`);
   drawLegend('table', maxLayerOf(view), '这张图来自输入框里的 SQL，重扫目录或换表即失效');
   const result = drawTable(cy, view, {
@@ -371,46 +418,234 @@ async function drawParsedTable() {
   showWarning(result);
 }
 
-async function drawParsedColumns() {
-  const view = parsedColumnsView(state.parse);
-  state.payload = view;
-  setGraphTitle(`试解析·字段（未入快照，${(view.nodes || []).length} 节点 / ${(view.edges || []).length} 边）`);
-  // 不再传 extraNote：中间跳已经显形成虚线盒了，"仍折在 hops 里"是句反话
-  drawLegend('column', maxLayerOf(view));
-  const result = drawColumns(cy, view, {
-    onColumn: guard((id) => openParsedColumn(id)),
-    onBox: guard((table) => showParsedTable(table)),
-    onEdge: guard((data) => showParsedEdge(data.realFrom || data.source, data.realTo || data.target)),
-  }, { focus: state.parsedColumn });
-  showWarning(result);
+async function drawParsedColumns(seq) {
+  const data = await api.sqlflowParse(state.parse.rawSql, state.parsedColumn);
+  if (seq !== renderSeq) {
+    return;
+  }
+  state.payload = data;
+  showSqlFlow(data, '试解析·字段（未入快照）', state.parsedColumn);
 }
 
 async function drawColumnGraph(seq) {
   if (!state.table) {
     setWarn('');
     setGraphTitle('先选一张表再看字段链路');
+    dropSqlFlow();
     cy.elements().remove();
     drawLegend('column', state.maxLayer);
     return;
   }
-  const view = await api.columnGraph({
+  /*
+   * 选中的那一列未必属于 state.table：点邻居盒里的一行只改 state.column（这片邻域仍以选中的
+   * 那张表为中心）。把"表 X + Y 的列名"原样打过去只能得到一个在 X 里不存在的列，所以不同源时
+   * 交完整标识给 focus：邻域照 X 裁，焦点保那一列。
+   */
+  const picked = state.column || '';
+  const prefix = `${state.table}.`;
+  const sameTable = picked.startsWith(prefix);
+  const data = await api.sqlflowGraph({
     table: state.table,
-    column: state.column ? columnNameOf(state.column, state.table) : '',
+    column: sameTable ? picked.slice(prefix.length) : '',
+    focus: sameTable ? '' : picked,
     depth: depth(),
   });
   if (seq !== renderSeq) {
     return;
   }
-  state.payload = view;
-  setGraphTitle(`${state.column || `${state.table} 全部字段`} 的字段链路（${(view.nodes || []).length} 节点 / ${(view.edges || []).length} 边）`);
+  state.payload = data;
+  showSqlFlow(data, `${state.column || `${state.table} 全部字段`} 的字段链路`, state.column);
+}
+
+/**
+ * 一份响应画一张图：快照的字段视图和试解析的字段视图走同一条路径。
+ *
+ * focus 是列的完整标识（table.column）：服务端按它裁邻域，前端再把"只留这一列的通路"落到实处——
+ * 这就是浮层第一个按钮的结论，选中了字段就先进来。
+ */
+function showSqlFlow(data, heading, focus) {
+  const meta = data.metaInfo || {};
+  const summary = data.summary || {};
+  state.sqlflow = { index: indexSqlFlow(data), view: null };
+  state.popTarget = null;
+  pop.hide();
+  /*
+   * 标题报的必须是画布上真有的东西：超上限时服务端只给模型不给几何（tables 是空的），
+   * 这时候照念 metaInfo.boxCount 就是"602 表盒"配一张白画布。
+   */
+  setGraphTitle(meta.drawn === false ? `${heading}（没画：只给数据模型，见下方说明）`
+    : `${heading}（${meta.boxCount || 0} 表盒 / ${meta.rowCount || 0} 字段行 / `
+      + `${summary.relationship || 0} 条关系）`);
   drawLegend('column', state.maxLayer);
-  const result = drawColumns(cy, view, {
-    onColumn: guard((id, table) => selectColumn(id, table)),
-    onBox: guard((table) => selectTable(table)),
-    onEdge: guard((data) => showEdge(data.realFrom || data.source, data.realTo || data.target)),
-  }, { focus: state.column });
-  showWarning(result);
-  setHot(cy, state.column);
+  const view = paintSqlFlow(cy, data, sqlflowHandlers());
+  state.sqlflow.view = view;
+  showWarning(view);
+  const rowId = focus ? rowIdOfColumnId(state.sqlflow.index, focus) : null;
+  if (rowId) {
+    view.crop(rowId);
+    focusRow(rowId);
+    showPop(rowId);
+  }
+}
+
+/**
+ * 浮层要跟的是"那一行的完整身份"，不只是图上标识：
+ * 三个动作各读一个字段（裁剪读 rowId、列清单读 entityId、标题读 columnId），
+ * 少填一个就在 placePop 里空指针。
+ */
+function focusRow(rowId) {
+  const row = state.sqlflow.index.rows.get(rowId) || {};
+  const column = state.sqlflow.index.columns.get(row.modelId) || {};
+  state.popTarget = {
+    rowId,
+    columnId: column.qualifiedName || rowId,
+    entityId: column.entityId,
+  };
+}
+
+function sqlflowHandlers() {
+  return {
+    onRow: guard((rowId, data) => pickRow(rowId, data.modelId)),
+    onBox: guard((boxId, data) => pickBox(data)),
+    onEdge: guard((edgeId) => {
+      pop.hide();
+      const rows = evidenceOfEdge(state.sqlflow.index, edgeId);
+      if (rows.length) {
+        renderEdge(ui.detail, rows, `${rows[0].from} → ${rows[0].to}`);
+      } else {
+        renderEmpty(ui.detail, '这条线背后没有解析出的关系：它是中间站之间的一跳，点两端的字段行看证据。');
+      }
+    }),
+    onBlank: guard(() => pop.hide()),
+  };
+}
+
+/**
+ * 点一行 = 全部在本地完成：换右栏证据、描高亮、把浮层贴上去。
+ *
+ * 不打请求：这次请求给的就是这一片的全部结论，再打一次只会拿到同一份。
+ */
+function pickRow(rowId, columnModelId) {
+  const bag = state.sqlflow;
+  const card = columnCard(bag.index, columnModelId);
+  if (!card) {
+    renderEmpty(ui.detail, '这一列没在数据模型里登记：多半是超出每盒 200 列的登记上限');
+    return;
+  }
+  if (state.view === 'parsed-column') {
+    // 试解析的选区记在 parsedColumn 上：state.column 是快照那套的坐标，串了台
+    state.parsedColumn = card.id;
+  } else {
+    state.column = card.id;
+    syncHash();
+  }
+  focusRow(rowId);
+  setHot(cy, rowId);
+  renderColumn(ui.detail, entityCard(bag.index, card.entityId), card);
+  showPop(rowId);
+}
+
+/** 浮层贴回它跟着的那一行：裁剪会重排，行号一变位置就得重算 */
+function showPop(rowId) {
+  showWarning(state.sqlflow.view);
+  placePop(rowId);
+}
+
+function placePop(rowId) {
+  const node = cy.getElementById(rowId);
+  if (!node.nonempty()) {
+    pop.hide();
+    return;
+  }
+  const at = node.renderedPosition();
+  const target = state.popTarget;
+  pop.show(at.x, at.y, `${target.columnId}（点动作条外任意处可收起）`);
+}
+
+/**
+ * 点盒顶的表名 = 以那张表为中心重新展开；中间站没在库里，只列它的字段。
+ *
+ * 语句内关系（CTE/子查询/函数盒）不是能按名字寻址的表，打过去只能得到 400，
+ * 所以它不进选表这条路。
+ */
+function pickBox(data) {
+  pop.hide();
+  if (state.view === 'parsed-column') {
+    // 试解析只认字段 focus，没有"以某表为中心重新取一片"这条路；
+    // 这份响应本来就是整段 SQL 的结论，就地列字段比打快照端点诚实。
+    listEntity(data.modelId);
+    return;
+  }
+  if (!data.local && data.table) {
+    openColumnView(data.table, null);
+    return;
+  }
+  listEntity(data.modelId);
+}
+
+/** "列出字段"：模型登记了什么就列什么，没画进盒子的那几行标出来 */
+function listEntity(entityModelId) {
+  const bag = state.sqlflow;
+  const card = entityCard(bag.index, entityModelId);
+  if (!card) {
+    renderEmpty(ui.detail, '这个盒子里没有可列的字段');
+    return;
+  }
+  const parsed = state.view === 'parsed-column';
+  renderTable(ui.detail, card, {
+    onColumn: guard((column) => openListedColumn(card, column)),
+    onWholeTable: guard(() => (parsed
+      ? openParsedColumn(null)
+      : openColumnView(card.table, null))),
+  });
+}
+
+/**
+ * 清单里点一列：画得出来的就地裁剪，画不出来的才换一次中心重新取。
+ *
+ * 没画进盒子的列没有坐标，本地无从裁起；而中间站不能按表名寻址，只能把证据铺在右栏。
+ */
+function openListedColumn(card, column) {
+  const bag = state.sqlflow;
+  const rowId = rowIdOfColumnId(bag.index, column.id);
+  if (rowId) {
+    pickRow(rowId, column.modelId);
+    return;
+  }
+  if (state.view !== 'parsed-column' && !card.local) {
+    selectColumn(column.id, card.table);
+    return;
+  }
+  renderColumn(ui.detail, card, columnCard(bag.index, column.modelId));
+}
+
+/**
+ * 字段视图的右栏优先查这一份响应，查不到才退回按表寻址的老端点。
+ *
+ * "一次请求给全"的意思就是图上有的、右栏列的、顶栏数的是同一份结论；
+ * 再打一次 /api/table/x/columns 会拿到第二个真相（那张表在整库里的全量字段）。
+ *
+ * @return 响应里查到了并渲染好，返回 true
+ */
+function sqlflowDetail(columnId, tableId) {
+  const bag = state.sqlflow;
+  if (!bag || !bag.view) {
+    return false;
+  }
+  if (columnId) {
+    const modelId = bag.index.columnIdByName.get(columnId);
+    const card = modelId === undefined ? null : columnCard(bag.index, modelId);
+    if (card) {
+      renderColumn(ui.detail, entityCard(bag.index, card.entityId), card);
+      return true;
+    }
+  }
+  const entityId = bag.index.entityIdByName.get(tableId);
+  if (entityId === undefined) {
+    return false;
+  }
+  listEntity(entityId);
+  return true;
 }
 
 function drawLegend(kind, maxLayer, extraNote) {
@@ -460,17 +695,17 @@ async function refresh() {
       await refresh();
       return;
     }
-    /* 试解析的三条路径都不打后端，同步画完，不会有别的意图插在中间 */
+    /* 试解析的三条路径都不打快照端点，同步画完，不会有别的意图插在中间 */
     if (state.view === 'parsed-table') {
       await drawParsedTable();
       renderEmpty(ui.detail, '临时解析视图：点表节点看它在这次解析里的字段清单，点表级边看它出自哪条语句。');
       return;
     }
-    await drawParsedColumns();
-    if (state.parsedColumn) {
-      showParsedColumnDetail(state.parsedColumn);
-    } else {
-      renderEmpty(ui.detail, '点字段节点看它在这次解析里的来源，点边看加工方式与 SQL 原文。');
+    await drawParsedColumns(seq);
+    if (!sqlflowDetail(state.parsedColumn, null)) {
+      renderEmpty(ui.detail, state.parsedColumn
+        ? '这一列没进这次解析的画布：多半超出了每盒行数预算，顶栏有降级说明。'
+        : '点字段行看它在这次解析里的来源，点边看加工方式与 SQL 原文。');
     }
     return;
   }
@@ -480,6 +715,9 @@ async function refresh() {
     await drawColumnGraph(seq);
   }
   if (seq !== renderSeq) {
+    return;
+  }
+  if (state.view === 'column' && sqlflowDetail(state.column, state.table)) {
     return;
   }
   if (state.column) {
@@ -498,7 +736,6 @@ async function showTableDetail(tableId, seq) {
   if (seq !== renderSeq) {
     return;
   }
-  state.columns = data;
   renderTable(ui.detail, data, {
     onColumn: (column) => openColumnView(data.table, column.id),
     onWholeTable: (table) => openColumnView(table, null),
@@ -506,16 +743,13 @@ async function showTableDetail(tableId, seq) {
 }
 
 async function showColumnDetail(columnId, table, seq) {
-  const owner = state.columns && state.columns.table === table
-    ? state.columns
-    : await api.columns(table);
+  const data = await api.columns(table);
   if (seq !== renderSeq) {
     return;
   }
-  state.columns = owner;
-  const column = (owner.columns || []).find((row) => row.id === columnId);
+  const column = (data.columns || []).find((row) => row.id === columnId);
   if (column) {
-    renderColumn(ui.detail, owner, column);
+    renderColumn(ui.detail, data, column);
   } else {
     renderEmpty(ui.detail, `${columnId} 没有出现在字段清单里：它可能是被折掉的中间关系字段`);
   }
@@ -525,7 +759,6 @@ async function selectTable(tableId) {
   leaveParsed();
   state.table = tableId;
   state.column = null;
-  state.columns = null;
   syncHash();
   await refresh();
   await markActiveRow();
@@ -557,21 +790,6 @@ function showParsedTable(tableId) {
   });
 }
 
-function showParsedColumnDetail(columnId) {
-  setHot(cy, columnId);
-  renderColumn(ui.detail,
-    parsedTableDetail(state.parse, tableOf(columnId)),
-    parsedColumnDetail(state.parse, columnId));
-}
-
-/** 同一对端点可能有多条边（不同加工方式），和快照版的 /api/edge/column 同口径 */
-function showParsedEdge(from, to) {
-  const rows = (state.parse.columnEdges || [])
-    .filter((edge) => edge.from === from && edge.to === to)
-    .map((edge) => ({ ...edge, sqlText: state.parse.rawSql }));
-  renderEdge(ui.detail, rows, `${from} → ${to}`);
-}
-
 function openParsedColumn(columnId) {
   state.parsedColumn = columnId;
   switchView('parsed-column');
@@ -583,14 +801,6 @@ async function markActiveRow() {
   ui.tableList.querySelectorAll('li').forEach((row) => {
     row.classList.toggle('active', row.dataset.id === state.table);
   });
-}
-
-async function showEdge(from, to) {
-  try {
-    renderEdge(ui.detail, await api.edge(from, to), `${from} → ${to}`);
-  } catch (error) {
-    fail(error);
-  }
 }
 
 function openColumnView(table, column) {
@@ -617,9 +827,9 @@ function guard(fn) {
 
 async function resetSelection() {
   leaveParsed();
+  pop.hide();
   state.table = null;
   state.column = null;
-  state.columns = null;
   syncHash();
   await refresh();
   await markActiveRow();
@@ -733,7 +943,7 @@ document.getElementById('rescan').addEventListener('click', guard(async () => {
   const data = await api.scan(dir);
   state.table = null;
   state.column = null;
-  state.columns = null;
+  pop.hide();
   // 快照换了，上一段临时解析结果也就没有对照意义了
   state.parse = null;
   state.parsedColumn = null;

@@ -177,6 +177,7 @@ export function renderError(container, error) {
 export function renderTable(container, data, handlers) {
   clear(container);
   const columns = data.columns || [];
+  const painted = columns.filter((column) => column.painted !== false).length;
   container.appendChild(el('h2', null, data.name || data.table));
   container.appendChild(kv([
     ['标识', data.table],
@@ -184,11 +185,19 @@ export function renderTable(container, data, handlers) {
     ['层级', `第 ${data.layer} 层`],
     ['关系类型', data.local ? '语句内关系（CTE / 子查询 / 展开）' : '物理表'],
     ['字段数', columns.length],
+    // painted 只有 /api/sqlflow/graph 给：整表列了 40 个、盒子里只画了 14 行，
+    // 不交代这一层差，右栏就成了比画布更理直气壮的第二个清单
+    ...(columns.some((column) => column.painted !== undefined)
+      ? [['画进盒子', `${painted} / ${columns.length}`]] : []),
+    ...(data.hiddenColumns ? [['超出登记上限', data.hiddenColumns]] : []),
   ]));
 
   const tools = el('div', 'column-picker');
-  tools.appendChild(button('铺开整表字段链路', () => handlers.onWholeTable(data.table)));
-  container.appendChild(tools);
+  // 语句内中间站不能按名字重新寻址，这个按钮点了只会拿到 400，那就别摆出来
+  if (!data.local) {
+    tools.appendChild(button('铺开整表字段链路', () => handlers.onWholeTable(data.table)));
+    container.appendChild(tools);
+  }
 
   if (!columns.length) {
     container.appendChild(alertBox('info', '这张表没有字段级血缘：多半是 SELECT * 或建表 DDL 未提供列清单'));
@@ -205,6 +214,9 @@ export function renderTable(container, data, handlers) {
     }
     const meta = el('span', 'meta');
     meta.textContent = `↑${column.sourceCount} 来源 · ↓${column.consumerCount} 去向`;
+    if (column.painted === false) {
+      meta.appendChild(el('span', 'dim', '· 未画进盒子'));
+    }
     li.appendChild(meta);
     li.addEventListener('click', () => handlers.onColumn(column));
     list.appendChild(li);

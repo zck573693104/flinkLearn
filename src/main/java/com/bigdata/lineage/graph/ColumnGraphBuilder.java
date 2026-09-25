@@ -254,8 +254,7 @@ public final class ColumnGraphBuilder {
      * 两个文件里的 {@code tmp} 会被接成同一个节点，凭空造出跨作业的 CTE 链路。文本哈希与拼接
      * 顺序无关；同一条语句被扫两遍时反而正确地合成一份。
      */
-    private static String localName(TableLineage lineage, int ordinal) {
-        for (ColumnEdge edge : nullSafe(lineage.getColumnEdges())) {
+    private static String localName(TableLineage lineage, int ordinal) {        for (ColumnEdge edge : nullSafe(lineage.getColumnEdges())) {
             if (!isEmpty(edge.getJobId())) {
                 return edge.getJobId();
             }
@@ -265,6 +264,14 @@ public final class ColumnGraphBuilder {
             return "stmt" + ordinal;
         }
         return digest(sql);
+    }
+
+    /**
+     * 图里用的语句标识，原样暴露给调用方：贴 SQL 试解析这条路径不落快照，
+     * 但它要把语句原文按同一个键登记起来好让 UI 回显，自己再推一遍就会和图里对不上。
+     */
+    public static String jobIdOf(TableLineage lineage, int ordinal) {
+        return lineage == null ? "stmt" + ordinal : localName(lineage, ordinal);
     }
 
     private static String digest(String sql) {

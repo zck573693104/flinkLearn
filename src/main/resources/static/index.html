@@ -87,6 +87,16 @@
       <div id="graph"></div>
       <!-- 告警写在画布外面就会改变画布高度，而 fit 的结论正是"这个高度装不下"：只能叠在画布上 -->
       <span id="graph-warn" class="warn" role="status"></span>
+      <!-- 字段行旁边的跟随式动作条：操作对象就是刚点的那一行，离远了用户找不回自己点哪儿了 -->
+      <div id="sqlflow-pop" class="pop" role="dialog" aria-label="字段动作" hidden>
+        <p class="pop-title"></p>
+        <div class="pop-tools">
+          <button type="button" data-pop="chain">只看这一列</button>
+          <button type="button" data-pop="columns">列出字段</button>
+          <button type="button" data-pop="reset">复位</button>
+          <button type="button" data-pop="close" class="close" aria-label="关闭">×</button>
+        </div>
+      </div>
     </div>
     <div id="legend" class="legend"></div>
   </section>

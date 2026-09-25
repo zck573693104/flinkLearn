@@ -48,9 +48,10 @@ export const api = {
   tables: (params) => request(`/tables${query(params)}`),
   tableGraph: (params) => request(`/graph/table${query(params)}`),
   columns: (table) => request(`/table/${encodeURIComponent(table)}/columns`),
-  columnGraph: (params) => request(`/graph/column${query(params)}`),
-  edge: (from, to) => request(`/edge/column${query({ from, to })}`),
   issues: (type) => request(`/issues${query({ type })}`),
   parse: (sql) => request('/parse', json({ sql })),
+  /** 字段级血缘：一次请求拿回数据模型 + 服务端算好的坐标，前端不再拼第二份真相 */
+  sqlflowGraph: (params) => request(`/sqlflow/graph${query(params)}`),
+  sqlflowParse: (sql, focus) => request('/sqlflow/graph', json({ sqltext: sql, focus })),
   scan: (dir) => request('/scan', json(dir ? { dir } : {})),
 };

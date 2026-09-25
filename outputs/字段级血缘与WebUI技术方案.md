@@ -3,7 +3,7 @@
 > 分支：`lineage-only-webui`（本方案实施分支，血缘专用、无 Flink 依赖）
 > 派生自：`feat-column-lineage-webui` @ `546ae69`
 > 日期：2026-09-21（最后更新 2026-09-22）
-> 状态：**M0–M6 已全部落地**，§2–§13 是设计依据，§8.4–§8.8 与 §14 是逐项实测记录
+> 状态：**M0–M7 已全部落地**，§2–§13 是设计依据，§8.4–§8.12 与 §14 是逐项实测记录
 
 ## 0. 文档定位
 
@@ -390,9 +390,10 @@ com.bigdata.lineage.web/
   LineageProperties.java         @ConfigurationProperties("lineage")：scanDir、rescanOnStart
   CorpusScanner.java             ApplicationRunner：递归 .sql → 逐语句解析 → 回写 jobId → 换快照
   GraphAssembler.java            子图裁剪（root/direction/depth）+ Cytoscape JSON 序列化
-  api/LineageApiController.java  下列 9 个端点
+  api/LineageApiController.java  下列端点（M3 那 9 个 + §8.11 的 sqlflow 两个）
   api/ApiResponse.java           {success,data,message} 信封
   api/ApiErrorAdvice.java        @RestControllerAdvice：IAE/IO → 400，其余 → 500
+  sqlflow/                       §8.11：字段级的"对方形状 + 服务端布局"（Statement/Chain/Context/Flow/Assembler 五个类）
 com.bigdata.lineage.graph/
   ScanReport.java                质量账本：计数是全集，明细截到 200 条
   LineageStore.java              AtomicReference<Snapshot>；Snapshot = 图 + 账本 + jobId→SQL 索引
@@ -423,11 +424,14 @@ lineage:
 | GET | `/api/tables` | 表列表（含上下游度数、所在层、字段数） | `q`（大小写不敏感**子串**）、`layer`、`onlyUnresolved` |
 | GET | `/api/graph/table` | 表级分层 DAG | `root`（空=全量）、`direction=up\|down\|both`、`depth`（默认 2，上限 8） |
 | GET | `/api/table/{table:.+}/columns` | 该表字段清单 + 每字段直接来源（带证据）与去向 | — |
-| GET | `/api/graph/column` | 字段级链路子图 | `table`、`column`（可空=整表）、`depth`（默认 3） |
-| GET | `/api/edge/column` | 单条边的证据 | `from`、`to` → `[{jobId,ordinal,engine,derivation,transform,hops[],sqlText,parseError,confidence}]` |
+| GET | `/api/graph/column` | 字段级链路子图（**前端已改走 `/api/sqlflow/graph`**，此端点仍由单测与 curl 覆盖） | `table`、`column`（可空=整表）、`depth`（默认 3） |
+| GET | `/api/edge/column` | 单条边的证据（同上，前端不再调它，证据改由 sqlflow 响应里的 `relationships` 给） | `from`、`to` → `[{jobId,ordinal,engine,derivation,transform,hops[],sqlText,parseError,confidence}]` |
 | GET | `/api/issues` | 质量视图 | `type=all\|parseError\|unresolved\|star\|noLineage\|orphan` |
 | POST | `/api/parse` | 贴 SQL 试解析（只读、不落库） | `{sql}` → `{statements,graph,columnEdges}` |
 | POST | `/api/scan` | 重扫目录，原子换快照 | `{dir?}` → 新统计 |
+| GET | `/api/sqlflow/graph` | **字段级血缘的唯一出图入口（快照）**：一次给回数据模型 + 关系 + 服务端算好的盒/行坐标 | `table`、`column`（可空=整表）、`focus`（可空，列标识）、`depth`（默认 3） |
+| POST | `/api/sqlflow/graph` | 同一形状，喂页面贴进来的 SQL（试解析，不入快照） | `{sqltext\|sql, focus}`——`focus` 只能是**列**标识，没有"按表重定心"这条路 |
+
 
 与原计划的三处偏离，都是实现期判断，记录在此以免被当成漏做：
 
@@ -459,6 +463,39 @@ lineage:
   "ranks": {...}, "cyclic": [] }
 ```
 
+`/api/sqlflow/graph` 回的是**对方（SQLFlow）那套形状 + 服务端布局**，一个信封里装四块（逐字段口径见 §8.11）：
+
+```json
+{ "sqlflow": {"dbobjs": {"servers": [...]}, "processes": [...], "relationships": [
+                {"id":"43","processId":"42","effectType":"select","type":"fdi",
+                 "sources":[{"id":"3","parentId":"1","parentName":"kafka_user_app_data","column":"eventbodylist",
+                             "qualifiedName":"kafka_user_app_data.eventbodylist",
+                             "transforms":[{"code":"app_name","type":"expression","coordinates":[{"x":3,"y":5}]}]}],
+                 "target":{"id":"7","parentName":"unnest1","qualifiedName":"[..sql#1]#unnest1.app_name"},
+                 "derivation":"EXPRESSION","confidence":0.85,"engine":"FLINK","ordinal":0,
+                 "transform":"app_name","hops":["kafka_user_app_data.eventbodylist","..","user_app_data.app_name"],
+                 "qualifiedName":"kafka_user_app_data.eventbodylist>user_app_data.app_name"} ]},
+  "graph":   {"elements": {"tables": [{"id":"n0","x":0,"y":96,"width":162,"height":57.96875,
+                                        "type":"table","local":false,"layer":0,"modelId":"1",
+                                        "label":{"content":"kafka_user_app_data","fontSize":"12",
+                                                 "fontFamily":"Cascadia Mono, Consolas, monospace",
+                                                 "width":137,"height":17.96875,"x":0,"y":0},
+                                        "columns":[{"id":"n0::n0","x":1,"y":117.96875,"width":160,"height":16,
+                                                     "modelId":"2","label":{...}}],
+                                        "edges":[{"id":"e0","sourceId":"n0::n0","targetId":"n2::n6"}]}],
+                       "listIdMap": {"n0": ["1"]}, "relationshipIdMap": {"e0": ["43"]}},
+              "summary": {"table":2,"view":0,"column":38,"process":1,"relationship":23,
+                          "mostRelationTables":[{"table":"user_app_data","relationCount":27}]}},
+  "sessionId": "6589a3871bf26b3e",
+  "metaInfo":  {"source":"D:\\project\\flinkLearn\\sql","focus":null,"boxCount":3,"rowCount":25,"modelRows":38,
+                "segmentCount":36,"drawn":true,"limit":14,"droppedRows":13,"droppedSegments":13,
+                "ranks":{"kafka_user_app_data":0,"[..sql#1]#unnest1":1,"user_app_data":2},
+                "cyclic":[], "parseErrorJobs":[], "warning":"1 个中间站…已展开成盒子；13 列未画…"} }
+```
+
+`columns[].id` 是 `盒id::行序号`，边的 `sourceId/targetId` 用的就是它（预算没收进行盒的列，端点退化成盒id）；`relationshipIdMap` 是"这条线背后有哪几条关系"，右栏逐跳证据按它去 `relationships` 里取，**前端不再打第二个请求**。
+
+
 证据字段的四条口径（前端实现期踩过，写死在这里）：
 
 - `ordinal` 是 **0 起**的 SELECT 下标（`app_name=0`、`app_version=1`），界面要显示"第几位"必须 +1。
@@ -480,13 +517,15 @@ lineage:
 
 ```
 src/main/resources/static/
-  index.html                     三栏骨架 + 顶栏统计/工具（深度、语料目录、重扫、两个导出）+ 空快照告警条 + 图头（标题/告警位/方向下拉）
+  index.html                     三栏骨架 + 顶栏统计/工具（深度、语料目录、重扫、两个导出）+ 空快照告警条 + 图头（标题/告警位/方向下拉）+ 中栏画布内的跟随式浮层
   css/app.css                    单文件；深色仪器台调色板变量（:root 一处定义，见 §8.6）+ derivation 徽标配色 + mark 高亮色
-  js/api.js         9 端点封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）+ 在途计数驱动顶栏进度条
+  js/api.js         9 个调用封装，统一解 {success,data,message} 信封（非 JSON 或 success=false 直接抛）+ 在途计数驱动顶栏进度条；字段级只打 /api/sqlflow/graph（服务端另两个旧端点见 §7.3）
   js/badges.js      **调色板唯一出口**：读 app.css 的 :root 变量导出 ink/EDGE_STYLE/LAYER_COLORS + derivation 中文提示、置信度分档
-  js/graph.js       挂载与样式表、nodePaint()（两张图共用的节点画法）、setHot()（选中态）、**按 layer 自算布局 runLayout()**（见 §8.7）、节点尺寸、NODE_CAP
+  js/graph.js       挂载与样式表、nodePaint()（两张图共用的节点画法）、setHot()（选中态）、**按 layer 自算布局 runLayout()**（见 §8.7，只管表级图）、fit()（可读字号下限 + 放不下就告警）、NODE_CAP
   js/graphTable.js  表级 DAG
-  js/graphColumn.js 字段链路图（derivation → 线型/颜色，中间关系暗底虚线框）
+  js/sqlflowModel.js 把 /api/sqlflow/graph 的 dbobjs/relationships 索引成右栏要的形状（列卡、实体卡、逐跳证据）
+  js/sqlflowView.js  字段链路图：**只照抄服务端坐标**，画盒/画行/连线 + 裁剪后纵向重排（见 §8.11）
+  js/sqlflowPop.js   跟随式动作浮层：贴在刚点的那一行旁边，三按钮 + 收起
   js/parsed.js      把 `/api/parse` 的 payload 拼成与快照同形的视图/详情形状，让试解析能直接画图（见 §8.8）
   js/detailPanel.js 右栏：表详情 / 字段来源 / 边证据 / 试解析结果
   js/main.js        选区状态机 + 全部事件绑定 + URL hash + 导出
@@ -507,14 +546,15 @@ src/main/resources/static/
   - 试解析：textarea → `POST /api/parse` → 逐语句卡片（输入表、插入模式、CTE/WINDOW/TEMPORAL 标记、未折叠字段边 + derivation 徽标、原文）。只读，不动快照。按钮是「解析并画到图上」：卡片之外还会把血缘画到中栏，见 §8.8。
 - **中栏**的 tab 共享同一份选区 `state.{view,table,column,parsedColumn}`：快照两个（表级 / 字段）+ 试解析两个（§8.8）。
   - 表级 DAG：按 `layer` 分层，节点底色 = 层色；点表节点 = 以它为中心重裁（root + direction + depth）并让右栏出字段清单；点边出"来源表/目标表/jobId"；点空白清选区回全量。
-  - 字段链路：节点是 `table.column`，被折掉的中间关系（CTE/子查询/展开）画成灰底虚线框，边按 derivation 上色上型（UNRESOLVED 红虚线、STAR 橙点线、AGGREGATE 加粗金…），hover 出 derivation 标签，当前定位列打 `hot`。
+  - 字段链路：**一表一盒、一盒一行一字段**（不是每列一个飘在画布上的节点）。盒顶固定一条标题带单独画表名，被折掉的中间关系（CTE/子查询/展开）画成中间的暗底虚线盒，边按 derivation 上色上型（UNRESOLVED 红虚线、STAR 橙点线、AGGREGATE 加粗金…），hover 出 derivation 标签，当前定位列打 `hot`。**行列坐标全部由服务端算好下发，前端只换算成 cytoscape 的中心点**，理由与口径见 §8.11。
+  - 点一行字段 = 在它旁边弹出**跟随式动作浮层**：`只看这一列` / `列出字段` / `复位` + ✕，选中态与右栏证据同时跟上（§8.11）。
   - 图头的「方向」下拉是**子图取数**方向（双向 / 只看来源 / 只看下游，喂给 `/api/graph/table` 的 `direction`），不是画法方向；画法方向由 `runLayout()` 在 LR / TB 里自动挑放缩更大的那个，详见 §8.7。
-  - 性能闸门 `NODE_CAP=300`：超限**直接不画**，只回告警 + 保留右栏（语料里 783/787 列的表整表展开是 1568 节点，画出来必卡）。右栏字段清单另外截到 80 行。
+  - 性能闸门：表级图是前端的 `NODE_CAP=300`，超限**直接不画**，只回告警 + 保留右栏（语料里 783/787 列的表整表展开是 1568 节点，画出来必卡）；字段级的闸门在 §8.11 之后搬进了服务端（行预算 + `BOX_CAP`），前端拿的就是裁好的那一片。右栏字段清单另外截到 80 行。
 - **与原计划的四处实现期取舍**，记下来免得被当成漏做：
-  1. 不做右键上下文菜单。"看字段血缘 / 只看下游 / 展开整表字段" 改成「点节点即重裁」+ 右栏「铺开整表字段链路」按钮 + 图头方向下拉——少一层瞬时交互状态，能力一条没少。
-  2. 字段链路不做 swimlane 泳道。自算 y 坐标的收益抵不过成本，改为按 `layer` 排 + 层色，纵向排布照样看得清链路。
+  1. 不做右键上下文菜单。~~「点节点即重裁 + 右栏按钮 + 图头方向下拉」~~ 表级图仍是这套；字段级在 §8.11 里换成了**跟随式浮层**——它比右键菜单便宜（不用跟光标、不用处理出界），又比埋在右栏的按钮就近。
+  2. 字段链路不做 swimlane 泳道。~~自算 y 坐标的收益抵不过成本，改为按 `layer` 排 + 层色~~ 已被 §8.11 推翻：字段图现在确实是"一列一层、纵向摞行"，但坐标改由服务端算。
   3. 边不按 `process_type` 上色，按 `derivation` 上色。字段级面板要回答的是"这条边多可信"，`process_type` 在表级边的证据里给。
-  4. 布局不引第三方分层引擎，`layer` 已经在 REST 响应里。自己摆坐标反而更准，代价是节点尺寸得手工调，见 §8.7。
+  4. 布局不引第三方分层引擎，`layer` 已经在 REST 响应里。自己摆坐标反而更准，代价是节点尺寸得手工调，见 §8.7。字段级更进一步：连"自己摆"都不摆了，见 §8.11。
 - 无框架、无构建，全部 ES module 相对导入。
 
 ### 8.3 证据块、导出与定位
@@ -731,6 +771,87 @@ src/main/resources/static/
 
 **回归**：`mvn -o clean package` 两遍 **259 绿**（改序号守卫后又 clean 跑了一遍）；`run-lineage.bat sql` 与 §11.1 基线逐项相等（15 文件 / 14 输出表 / 0 WARN / 2327 字段边，四类泄漏探针与双向引用全 0）；表级 DAG 与试解析·表级不受影响（`runLayout` 在没有盒子时排的就是节点本身）；`/api/*` 契约与解析层零改动。交互整链在内置浏览器里逐条走：左栏点表→出盒子（2 盒 + 2 标题 + 6 行 / 3 边）、点字段行→单列链路（2 行 / 1 边，hash 加 `&column=`）、点段边→原边证据、点标题行→回到整表展开、点中间跳行/跳盒→按设计不响应；冷启动直接吃 `#view=column&table=…` 深链也能画出退化图并说明缺了什么；console 除 vendored cytoscape 自带的 `wheelSensitivity` 提示外零 error。
 
+### 8.11 字段级血缘再改：布局进服务端 + 跟随式动作浮层（2026-09-23）
+
+**要求**（用户原话）："字段血缘看起来还是不优雅，模仿对方返回数据的接口方式。还有模仿对方的 ui 字段展示方式"。两个口径由 AskUserQuestion 定死：
+
+- **接口幅度 = 连布局一起照抄**：一次请求不只回数据模型，还要回**画出来长什么样**——每个盒、每一行的 `x/y/width/height` 连同标签字号字体全部服务端算好下发，前端只做"左上角 → cytoscape 中心点"的换算。原有 REST 端点一条不动，前端只换打哪个。
+- **字段 UI = 跟随式浮层 + 三按钮**：点一行字段，在它旁边贴出动作条（`只看这一列` / `列出字段` / `复位` + `×`）；画布只留这一列的通路，每个盒只留参与这条链路的行；右栏继续放边证据与字段清单。
+
+**为什么布局非搬到后端不可**：这套图的尺寸口径（盒宽 162、行距 16、标题带 21.96875、盒底留白 25.96875）一旦只有前端懂，"这张图长什么样"就没法在单测里断言，也没法被第二个消费方（导出、截图、别的客户端）复用；前端再算一遍就是一份会走样的副本。§8.10 那版画在 `graph.js` 里、算在浏览器里，Java 用例对它无能为力——这就是它两轮里各自翻过一次车（读不出字、整表拒画）的结构性原因。
+
+**后端**（新包 `com.bigdata.lineage.web.sqlflow`，5 个类）：
+
+| 类 | 职责 |
+|---|---|
+| `SqlFlowStatement` / `SqlFlowChain` | 对方形状的骨架：`dbobjs`（表/列两层的模型对象）+ `processes` + `relationships`，语句切分成"链"，一条链是一段可画的通路 |
+| `SqlFlowLayout` | 布局与度量：`BOX_W=162 ROW_H=16 ROW_W=160 ROW_TOP=21.96875 BOX_PAD=25.96875 RANK_GAP=220 BOX_GAP=22`，字号 `12`、字体 `Cascadia Mono, Consolas, monospace`，字符宽 `7.2` 用来截标签。列号 = 层号（`rankIndex*(BOX_W+RANK_GAP)`），同列内按行数摞，`PlacedBox/PlacedEdge/Plan` 三层产物 |
+| `SqlFlowAssembler` | 一次请求装配出一份"数据模型 + 布局"：`ROWS_CAP=14`、`ROW_BUDGET=600`（整图行预算按盒数摊薄）、`MODEL_ROWS_CAP=200`（进模型的列上限，超出只报数不登记）、`BOX_CAP=300`（超限整图不画，`drawn=false` + `warning` 原样送到前端） |
+| `SqlFlowContext` | 一次请求的解析上下文（表/列标识 → 模型对象、被折掉的关系） |
+
+`LineageApiController` 加两个端点（GET 走快照、POST 走页面贴的 SQL，**同一个装配器、同一份口径**）：`GET /api/sqlflow/graph?table&column&focus&depth`、`POST /api/sqlflow/graph {sqltext|sql, focus}`。响应形状与逐字段口径见 §7.3——`data.{sqlflow,graph,summary,sessionId,metaInfo}`，`graph.elements.tables[].columns[]` 就是"盒里的一行"，`columns[].id` 是 `盒id::行序号`。
+
+**前端**：`graphColumn.js` 删了，换成三个模块——`sqlflowModel.js`（把 `dbobjs/relationships` 索引成右栏要的列卡/实体卡/逐跳证据）、`sqlflowView.js`（照抄坐标画盒/画行/连线 + 裁剪后重排）、`sqlflowPop.js`（浮层只管贴上去、别溢出画布，坐标由调用方给）。两条约束值得钉在文档里：
+
+1. **前端不抄一份尺寸常量**。`measureGeometry()` 从响应里**量回**行距、标题带、盒底留白（行距 = 相邻两行 `y` 之差；标题带 = 首行 `y` − 盒顶；盒底留白 = 盒高 − 全部行高），`gapOf()` 再取同列相邻两盒之间**最小**的那条缝。常量一旦进前端就是第二份真相，服务端改了它就漂，而漂的表现是"行错位"这种没人会报警的样子。
+2. **`runLayout()` 只管表级图**（§8.7 那套按 `layer` 自算 + LR/TB 挑向），字段级不再走它——坐标已经是现成的，前端排一遍就是把服务端结论覆写一遍。
+
+**"只看这一列"是纯客户端裁剪**，不发第二次请求：这次响应给的就是这一片的全部结论，再打一次只会拿到同一份。`chainOf()` 沿边正向到下游、反向到源头收出通路（端点可能是行也可能是盒，所以只按标识收集，不假设类型），`restack()` 让留下的行从盒顶往下重摞、盒高跟着行数变、同列往上挤——**只有纵向动**，横向（哪一列）一律不动，因为列号就是层号，是这套图的语义本身，没有理由在用户点一下之后把"第 2 层"挪到"第 1 列"的位置上。
+
+**回归时抓到的两处静默失效**（都是真浏览器点出来的，281 个 Java 用例全绿照样带着走）：
+
+| 症状 | 根因 | 为什么静默 |
+|---|---|---|
+| 点字段行**只出右栏，浮层永远不出现** | `main.js#placePop()` 写了 `cy.renderedPosition(node)`——cytoscape 的 **Core 上根本没有这个方法**，只有元素有 `node.renderedPosition()` | `guard()` 把异常转成 `console.error` + 告警条一行字 + 右栏错误块，页面不崩、不弹栈，而 `pickRow()` 里 `renderColumn()` 在 `showPop()` 之前，右栏照常刷新——只看现象会以为是浮层样式没生效。**这是本轮唯一真正卡住的缺陷** |
+| 点"只看这一列"：行确实重摞了，**盒子和标题带还停在原尺寸**（大盒套小行，看着像裁剪没生效） | `sqlflowView.js#interactiveView()` 的 `base` 条目少存了 `id`，`place()` 里 `cy.getElementById(undefined)` 拿到**空集合** | cytoscape 对空集合写 `position()` / `style()` 是**静默 no-op**，不抛、不警告。定位办法是给元素原型上的 `style`/`position` 打桩，日志里看见 `this.id() === undefined` 才认出来——"没抛异常"在 cytoscape 里不等于"写进去了" |
+
+两处都是同一个教训：**这个前端没有 JS 测试，`StaticAssetIntegrityTest` 只钉得住文本层面的事（注释闭合、import 目标、DOM id），空集合写入和被 `guard` 吞掉的异常都不在它射程内**。所以"真起 jar + 真浏览器点一遍"不是仪式，是这道闸门本身——本轮每条读数：
+
+- 快照字段视图（`sql/` 语料，画布 516×273）：31 元素 / 23 边，其中 2 `tableBox` + 1 `hopBox` + 3 `headerRow` + 25 `columnRow`；告警条四段拼接齐全（放不下 28 个节点 / 1 个中间站 / 13 列未画 / 13 段链路两端未画）。
+- 画布上对首行 `n0::n0` 派发真实 `MouseEvent`（不是 `.emit('tap')`，走的是命中测试那条路）→ 浮层可见，`left 106.958px top 93.9167px`（宽 274，不出 516×273 的界），标题 `kafka_user_app_data.operation（点动作条外任意处可收起）`，四个按钮齐，该行上 `hot`。
+- 点"只看这一列" → `n0` 高 **41.96875**、`n2` 高 **169.96875**（= `BOX_PAD + 行数×ROW_H`，即 1 行和 9 行），`n1` 整个隐掉，两个盒子的标题带**跟着各自的盒走**，可见行 9 / 可见边 9；`cy.png({full:true})` 出来的整图 930×174（修前约 250 高——空盒子占着没缩的那截），盒底边线像素分别读到 `#4fd6c4`（层 0）与 `#ffcb52`（层 1），缩下去的盒底下 +8/+40px 是 `rgba(0,0,0,0)`（真没画东西，不是被盖住），行内底色 `rgb(20,30,43)` = `--row-fill`。
+- 点"列出字段" → 实体卡「字段数 27 / 画进盒子 14 / 27」；点"复位" → 三盒高度回到 57.97 / 169.97 / 249.97，25 行 23 边全在；点 `×` → 浮层收起，`hot` **故意留着**（收起的是动作条，不是"取消选中"）。
+- 在边的中点（`edge.renderedMidpoint()`）派发点击 → 右栏字段边证据：命中 1 条边、`IDENTITY · 直通`、置信度 95%、引擎 FLINK、语句 `ck/user_app_data_ck_dml.sql#1`；点标题带 → 该表实体卡；点空白 → 只收浮层。
+- 试解析（合成 `INSERT INTO demo_sink SELECT a.user_id, a.amount + b.rate AS total FROM kafka_src a JOIN dim_src b ON a.user_id = b.user_id`）→ 「切分 1 条语句 / 折叠后 3 条字段边 / 3 张表」；试解析·表级 3 节点 2 边；试解析·字段 3 盒 5 行 3 边；点行同样弹浮层（`kafka_src.user_id`），裁剪后同样缩到 41.97 且标题带跟随；点标题带出实体卡，非实体表的「铺开整表字段链路」重新 POST 后按不裁剪重画，**无 400**（§8.10 那个"拿中间跳行的标识去打 `/api/column`"的坑在新形状里不存在：中间站是盒不是列，行只登记真字段）。
+- console **0 error**；84 条 warn 只有两类：vendored cytoscape 自带的 `wheelSensitivity` 提示，和 `paintSqlFlow()` 逐元素创建时带 `style` 的 "Setting a `style` bypass at element creation"——后者**留着**：尺寸本来就得按响应里每个盒/每行各写一份，改成批量样式表反而要把服务端坐标再翻译一遍。
+
+`/api/graph/column` 与 `/api/edge/column` 保留但前端不再调用（契约与单测还在，见 §7.3）；vendored 依赖仍是 cytoscape 一件，没借"照抄布局"之名把 dagre 请回来。
+
+**验证方法的两个坑**（补充 §8.10 那一段）：内置浏览器（`browser-use`）的 `click` 对这个隐藏标签页里的应用内按钮**会返回"Successfully clicked"却什么都不做**，所以 DOM 走 `evaluate_script` 里的 `.click()`、cytoscape 走真实 `MouseEvent` 派发；`evaluate_script` 只认 `waitForStableDom`，传 `waitForStablePage` 会被 additionalProperties 拒掉。
+
+**回归**：`mvn -o clean package` **281 绿**（§8.10 的 259 → 本轮新增 `SqlFlowStatementTest` 与 `SqlFlowAssemblerTest`：形状、坐标、行预算、超上限不画全在 Java 侧断言——这正是"布局进服务端"换来的东西）；`/api/overview` 与 §11.1 基线逐项一致；表级 DAG、试解析·表级、右栏证据块不受影响。
+
+### 8.12 回归这一轮：上一节落地后改出来的五处缺陷（2026-09-24）
+
+用户原话「**回归代码是否有 bug 再检查一下字段血缘渲染**」。做法沿用 §11 那道闸门的老顺序：逐行复核本轮 diff（后端 `web/sqlflow` 五个类 + 前端三个模块）→ clean 构建 + 语料基线 → 真浏览器把字段血缘整条链再点一遍。**复核出五处，全修**；两处判为设计内、不动（写在后面，免得下一轮又被当 bug 捞出来）。
+
+| 症状（用户看得见的） | 根因 | 现在的钉子 |
+|---|---|---|
+| 点盒顶的表名**没有以那张表重开一片**，只是把字段清单列出来——而图例明写"点表名以那张表为中心展开" | `SqlFlowLayout.boxJson()` 压根没往几何里写 `qualifiedName`，而 `sqlflowView.js` 读的是 `box.qualifiedName` → `data.table` 恒为 `undefined` → `pickBox()` 的 `if (!data.local && data.table)` 永远不成立 | 后端补 `qualifiedName`（盒与行都补），`SqlFlowAssemblerTest#geometryCarriesTheAddressableRelationName` 用两条断言钉住：**每个盒的 `qualifiedName` 必须是 `metaInfo.ranks` 的键**（能被打进请求的名字才算名字），**每行的必须以其盒的关系标识 + `.` 开头** |
+| 字段链路里点了"只看这一列"，再切到**表级 DAG → 整张画布白掉**，只剩一句过期告警 | 换视图只换了图，没清字段视图留下的句柄：`state.sqlflow.view` 还指着一张已经不算数的图，浮层也还挂在 `.canvas` 上，点它就是把**旧裁剪**盖到新图上——`crop()` 第一步是 `cy.elements().style('display','none')`，再拿旧标识往回找，新图上谁也找不到 | `main.js#dropSqlFlow()`（清 `sqlflow`/`popTarget` + 收浮层）在 `drawTableGraph()`、`drawParsedTable()` 与"没选表"分支里各调一次；`sqlflowView.js#crop()` 开头加 `if (!cy.getElementById(rowId).nonempty()) return view`——**空集合在 cytoscape 里是静默 no-op，但"全部隐藏 + 找不到要显回来的"不是**，所以这一层守卫是必需的而不是防御性冗余 |
+| 在邻域里点了**别人家的字段行**，再改深度 → 请求变成 `table=X&column=<Y 的列名>`，服务端在 X 里找不到那列，焦点丢了 | `pickRow()` 只更新 `state.column`（一片邻域仍以选中的表为中心），而 `drawColumnGraph()` 以为二者同源 | 不同源就交完整标识：`sameTable` 判 `state.column` 是否以 `state.table + '.'` 开头，是则拆短名给 `column=`，否则整条给 `focus=`（邻域照 X 裁、焦点保那列）。顺手删了因此变成死代码的 `columnNameOf()` |
+| 超上限"不画"时标题照念 `metaInfo.boxCount`：**"602 表盒 / 3 000 字段行"配一张白画布** | 标题只读 meta，不知道 `drawn` 是 false | `meta.drawn === false` 时标题改口"（没画：只给数据模型，见下方说明）"，数字留给告警条 |
+| 自环（`INSERT INTO t SELECT ... FROM t`）那几段**凭空消失**，既不画线也不说为什么 | 布局层两端同行的段两处 `continue` 只跳过不记账 | `Plan.skipped` 计数 + 装配层一句「N 段两端落在同一个盒子或同一行（自环），不画线」；`SqlFlowAssemblerTest#selfDependencyDrawsNoLoopButSaysSo` 断言边为空**且**告警里有"自环" |
+| （收紧）浮层藏着时程序化点"列出字段"会 `state.sqlflow.index` 空指针 | `chain`/`reset` 两个动作都判了 `state.sqlflow`，只有 `columns` 漏了 | 三个动作口径一致：都判 `state.popTarget && state.sqlflow` |
+
+**判为设计内、这一轮没动的两处**：① 同一个中间跳的两头本来就该是两条关系（`groupsOf()` 按 `segment.getTo()` 分组，所以一条折过来的两跳会共享 `qualifiedName`）——这是 SQLFlow 那个形状本身，画布上每条线各自开得出自己那半的证据；② 控制器不替调用方规整 `focus` 原文——填错焦点的表现是"不裁剪"，而前端本来就先用 `rowIdOfColumnId()` 试过才裁，不会因此画歪。
+
+**这一轮实测读数**（新 jar、`sql/` 快照，画布 516×273、缩放 0.83）：
+
+- 加载即 31 节点 / 23 边全可见，三盒高 **57.97 / 169.97 / 249.97**（= 2 / 9 / 14 行）；标题 `user_app_data 全部字段 的字段链路（3 表盒 / 25 字段行 / 23 条关系）`。
+- 点中间站那一行 `n1::n1` → 浮层标题 `[ck/user_app_data_ck_dml.sql#1]#unnest1.app_id`，右栏 `app_id（unnest1）`：**中间站是点得着、也叫得出全名的**。
+- "只看这一列" → 可见 9 节点 / 2 边，三盒都缩到 **41.97**（各留 1 行），告警条尾巴是"当前只画选中字段的通路（点浮层「复位」还原整片）"；"复位" → 回到 31 / 23 与 57.97 / 169.97 / 249.97，裁剪那句跟着消失；`×` 只收浮层。
+- **白屏回归专测**：开着浮层切"表级 DAG" → 浮层 `display:none`、表级 2 节点 1 边全可见；此时**程序化强点**已经没意义的"只看这一列"和"列出字段" → 画布一个元素都不掉，右栏老实回答"`…#unnest1.app_id` 没有出现在字段清单里"，页面不抛。
+- **盒顶表名手势**：点 `n0#h` → `location.hash` 变 `#view=column&table=kafka_user_app_data` 并重画（修前它只会列字段、hash 不动）。
+- **跨表焦点**：选中 `user_app_data.mcu_software_ver`（别人家的列）后把深度从 2 改到 3 → 请求 `/api/sqlflow/graph?table=kafka_user_app_data&focus=user_app_data.mcu_software_ver&depth=3`，画布按 kafka 那张表裁邻域、焦点保住那列，链路是 `kafka_user_app_data.operation → user_app_data.mcu_software_ver`（`e17`，非 synthetic）。
+- **几何 ↔ 模型身份核对**：25 行逐条比 `qualifiedName` 与按 `modelId` 反查到的模型列 `qualifiedName`，**0 处错位**（点一行反查到别的列这种错没发生）。
+- 试解析（同一条合成 JOIN）→ 3 盒 / 5 行 / 3 边，盒按 rank 左→右排开、两个源同列上下堆叠（x 81 / 81 / 463）；`dim_src.rate` 裁到 `n1::n0 → n2::n0` 两点一边。
+- console **0 error**；warn 仍是 §8.11 记过的那两类（`wheelSensitivity` + 逐元素 `style` bypass）。
+- **后台标签页的坑更新**：这一轮页面在后台（`document.visibilityState === 'hidden'`），对 `<canvas>` 派发真实 `MouseEvent` / `PointerEvent` **一次 `tap` 都没进命中测试**，只剩 `cy.getElementById(id).emit('tap')` 能用——§8.11 那次能派发真实事件是因为标签页在前台。**读数口径不变，事件入口要按前台/后台分开记**。
+
+**回归**：`mvn -o clean package` **283 绿**（281 + 上表两条新断言）；`run-lineage.bat sql` 与 §11.1/§14 基线**逐项一致**（原始字段边 2369 / 图字段边 2327 / 表边 6 / 节点 14 / 有字段的表 12 / maxLayer 1 / 环 `[]` / 四类探针与伪节点全 0）；`/api/overview` 仍是 `D:\project\flinkLearn\sql`（15 文件 / 22 语句 / 14 表）。
+
+
 ## 9. 里程碑与工作量
 
 | 阶段 | 内容 | 验收 | 估时 |
@@ -743,7 +864,9 @@ src/main/resources/static/
 | **M5 语料回归** | ✅ 已完成：子查询身份（别名只做查找键，`#subN` 才是身份）+ 无参关键字函数与 lambda 形参不再当列（§6）。实测细节与逐条定性见 §11.1 | 涉密语料：折叠告警 62→**0**、未折叠伪节点 0、幽灵列 0、UNRESOLVED 7→**2**（两条都是 CASE ELSE 的未限定列，两张未知表 ⇒ 按"宁缺勿假"口径保留，`ambiguousUnqualifiedColumnIsNotForcedOntoATable` 已锁这个语义）；`sql/` 基线：2376 原始列边不变，图列边 2329→**2327**（4 处 `current_timestamp` 假来源），0 告警。`mvn -o clean test` **252 绿** | 1d |
 | **M6 文档与残留收敛** | ✅ 已完成（见 §2.0.4、§2.0.5）：README 重写、33 份历史 md 删除、死脚本清理、未跟踪垃圾清理，`superior-sql-parser-temp/` 按你确认删除（代价与教训记在 §2.0.4 末段），与血缘无关的编译日志/一次性脚本/MySQL 建表脚本再删一批。**无遗留待办**：`column_lineage` DDL 随"不落库"结论一起取消（§10） | 顶层文档不再把读者引向 Calcite / superior jar / Flink 作业路线；`sql/` 语料 0 解析错误 | 0d |
 
-合计约 7.5 人日（§2.0 的结构与文档清理已完成，不计入）。M1 与 M3 可并行（解析层不依赖 Spring）。
+| **M7 字段级血缘重做**（§8.10 → §8.11，2026-09-22/23） | ✅ 已完成：先改成"一表一盒、一行一字段、线连字段行"，再把**布局整个搬进服务端**（新包 `web/sqlflow`：数据模型 + 关系 + 坐标 + 标签度量一次给全），前端换成 `sqlflowModel/sqlflowView/sqlflowPop` 三个模块 + **跟随式动作浮层**（`只看这一列` / `列出字段` / `复位`）。新端点 `GET/POST /api/sqlflow/graph`，旧 `/api/graph/column`、`/api/edge/column` 契约保留但前端不再打 | `mvn -o clean package` **281 绿**（§8.10 的 259 + `SqlFlowStatementTest` + `SqlFlowAssemblerTest`）；`/api/overview` 与 §11.1 基线逐项一致；真浏览器逐条读数见 §8.11（含裁剪后盒高 41.96875/169.96875 与盒底 `rgba(0,0,0,0)` 的像素对照），console **0 error**；揪出两处静默失效（不存在的方法被 `guard` 吞、空集合写坐标是 no-op）——正是它们证明了"能单测的判定该留在 Java"；§8.12 回归轮又揪出五处（盒顶表名静默降级、换视图残留裁剪句柄致白屏、跨表焦点参数错位、"不画"时标题说谎、自环不告警），**283 绿** | 1.5d |
+
+合计约 7.5 人日（§2.0 的结构与文档清理已完成，不计入）；M7 是落地后按使用者反馈重做的两轮，另计 1.5d。M1 与 M3 可并行（解析层不依赖 Spring）。
 
 ## 10. 持久化：确认不做（结论与 DDL 只留作参考）
 
@@ -834,9 +957,10 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 | 真实语料仍有语法错误恢复（历史上从 9→1 后仍有零星） | 部分列边缺失 | `parseError` 与 `confidence=0.2` 必须在 UI 显式呈现；`/api/issues` 专门列出来，绝不静默 |
 | 匿名表达式列命名不确定（障碍 #4） | 目标列名可能与真实表结构不符 | `POSITIONAL`/`UNNAMED` 显式标注，永不伪装成确定结果 |
 | Spark `lateralView` 标签化引入 ANTLR 歧义警告 | 解析行为漂移 | M0 用探针先验证，歧义则改显式子规则；grammar 卫生审计（`KW_` 双向 diff + 死规则）保持 0/0 |
-| 大语料下字段节点数远超表（万级列） | 前端卡死 | depth 默认 3、节点上限 300、按需展开；后端裁剪而非全量下发 |
+| 大语料下字段节点数远超表（万级列） | 前端卡死 | depth 默认 3、后端裁剪而非全量下发；§8.11 之后这套闸门整个搬进了 `SqlFlowAssembler`：行预算 `ROW_BUDGET=600` 按盒数摊薄、模型登记 `MODEL_ROWS_CAP=200`、超 `BOX_CAP=300` 直接 `drawn=false` 并回 `warning`，前端拿不到"整表 1568 节点"这种 payload，也就没有画不画得动的分支逻辑 |
 | vendored JS ~500KB 进 git | 仓库体积 | 明确一次提交锁定版本 + `vendor/README.md` 记来源，换取离线可运行 |
 | 无前端构建链，手写 JS | 复杂度上限 | 只做"图 + 面板"两件事；一旦需要路由/状态管理，另立方案而不是偷偷加 webpack |
+| **JS 侧的静默失效没有闸门兜** | 缺陷带着走完 CI 上线（§8.11 实测两处：`cy.renderedPosition(node)` 这个不存在的方法被 `guard` 转成一行告警、`getElementById(undefined)` 拿到空集合后写坐标是 no-op；§8.12 再补五处，其中三处的表现是"点了没反应"而不是报错） | `StaticAssetIntegrityTest` 只钉得住文本层面的事（注释闭合 / import 目标 / DOM id），管不到运行期。**能搬进 Java 的判定都搬进 Java**（布局、裁剪、预算），前端只留"照抄 + 换算"；剩下的交互只能靠真起 jar + 真浏览器逐条读数，且要记住"没抛异常"在 cytoscape 里不等于"写进去了"。几何里凡是前端要拿来当"地址"用的字段（关系标识、模型标识）**必须在 Java 测试里断言它等于请求参数能认的那个名字**——§8.12 那处表名手势就是这么静默降级的 |
 
 ## 13. 明确不做（v1 范围外）
 
@@ -865,3 +989,5 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - [x] 12. 图上读得出字（§8.9）：每个**可见**节点都数得到标签像素（对照组 `label:''` 只剩描边），屏上字高 ≥10px；画布放不下时放大到可读下限并左上对齐，右下角同时说清"画布 WxH 放不下 N 个节点"，且报的尺寸与实测盒子一致。图头/图例/告警三条都不许改变画布高度，`fit()` 前必须 `cy.resize()` 刷新 cytoscape 的容器尺寸缓存。
 - [x] 13. 字段级血缘读得出因果（§8.10）：一表一盒、一行一字段、线连字段行不连盒子；点字段行只剩这一列的通路；`hops` 长 ≥3 的边必须把中间伪列摊成虚线盒（层号插值落在上下游之间），点任意一段仍打开原边的逐跳证据；整表 1568 节点那种量级**不再拒画**，而是每盒 ≤14 行 + "还有 N 列未画" + "M 段链路因两端列未画而暂不显示"，且 N/M 与下发数字对得平（1540+28=1568 列、4+782=786 段）。告警条的"放不下"与"N 列未画"两半分开存，容器变大只准重算前一半。
 - [x] 14. 后点的必须后画（§8.10）：凡 `await` 取数之后还要往画布、右栏或 `state` 写的渲染路径，进门领一个意图序号、回来先比一次，过期就整段收手。人为拖慢大表那一条响应、连点三张表，最终画布 / 右栏 / hash 必须都停在最后一次点击。
+- [x] 15. 字段级的布局与展示一次给全（§8.11）：`GET/POST /api/sqlflow/graph` 同形状回"数据模型 + 坐标 + 标签度量"，`SqlFlow*Test` 在 Java 侧断言坐标，前端 `sqlflowView.js` 不再有一份尺寸常量（行距/标题带/盒底留白从响应量回）；点字段行弹跟随式浮层，三按钮逐个实测：`只看这一列` 后盒高必须等于 `BOX_PAD + 留下行数 × ROW_H`（实测 1 行 41.96875 / 9 行 169.96875）且标题带跟着盒走、盒底以下像素为 `rgba(0,0,0,0)`，`列出字段` 出「字段数 27 / 画进盒子 14」，`复位` 回到 57.97/169.97/249.97。`mvn -o clean package` **281 绿**、console **0 error**、`/api/overview` 与 §11.1 基线逐项一致。
+- [x] 16. 字段血缘的四个手势与两处记账都得自己说清（§8.12）：点盒顶表名**必须换 hash 并重画**（`data.table` 来自几何里的 `qualifiedName`，Java 侧断言它是 `metaInfo.ranks` 的键）；换视图必须把字段级的浮层与裁剪句柄一起清掉，且旧裁剪对不上新图时**一个元素都不许多隐藏**（`crop()` 先判 `nonempty()`）；选中别人家的列后改深度，请求得把完整标识交给 `focus=` 而不是 `column=`；`drawn=false` 与自环两处不许静默——标题改口"没画"、告警报"N 段两端落在同一个盒子（自环），不画线"。跨表那次的实测链路是 `kafka_user_app_data.operation → user_app_data.mcu_software_ver`（`e17`，非 synthetic），25 行几何与模型标识 **0 处错位**。`mvn -o clean package` **283 绿**、console **0 error**、语料基线逐项一致。
