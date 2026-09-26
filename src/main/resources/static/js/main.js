@@ -853,8 +853,8 @@ function drawLegend(kind, maxLayer, extraNote, tableRelCount) {
      * 常驻这一行等于叫用户去找一条不存在的虚线。
      */
     if (tableRelCount) {
-      note(`RelationRows 虚线行 = 两表只有表级关系、没有字段级血缘：这一片 ${tableRelCount} 对，`
-        + '点虚线看是哪条语句');
+      note(`盒里标着 RelationRows 的那一行是表级挂点：这一片有 ${tableRelCount} 对表只有表级关系、`
+        + '没有字段级血缘，靠它对出虚线，点虚线看是哪条语句');
     }
     note('Ctrl+滚轮或左下角 ＋／− 缩放，点「适应」回到放得下的比例');
   }
