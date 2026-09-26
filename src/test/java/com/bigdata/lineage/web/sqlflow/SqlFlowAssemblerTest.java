@@ -22,9 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * sqlflow 形状的响应：一次请求同时给出数据模型、坐标与统计，这里把三者的口径钉住。
+ * sqlflow 形状的响应：一次请求同时给出数据模型、落位结论与统计，这里把三者的口径钉住。
  *
- * <p>断言只盯"前端能不能照着画"：坐标是否自洽（盒高对得上行数、行落在盒内）、图上标识能否反查
+ * <p>断言只盯"前端能不能照着画"：落位是否只到网格（层号 + 同层序号，不给像素）、图上标识能否反查
  * 模型（{@code listIdMap}）、中间站是否真的成了一个盒。解析口径本身不在这里测（那是 parser/graph 包）。
  */
 class SqlFlowAssemblerTest {
@@ -105,7 +105,7 @@ class SqlFlowAssemblerTest {
     }
 
     private static String label(Map<String, Object> box) {
-        return String.valueOf(map(box, "label").get("content"));
+        return String.valueOf(box.get("name"));
     }
 
     private static Map<String, Object> boxNamed(Map<String, Object> payload, String name) {
@@ -128,13 +128,13 @@ class SqlFlowAssemblerTest {
     private static List<String> rowNames(Map<String, Object> box) {
         List<String> names = new ArrayList<>();
         for (Map<String, Object> row : list(box, "columns")) {
-            names.add(String.valueOf(map(row, "label").get("content")));
+            names.add(String.valueOf(row.get("name")));
         }
         return names;
     }
 
-    private static double num(Map<String, Object> json, String key) {
-        return ((Number) json.get(key)).doubleValue();
+    private static int intOf(Map<String, Object> json, String key) {
+        return ((Number) json.get(key)).intValue();
     }
 
     /** 一次调用同时给模型、坐标与统计：前端不需要第二次请求就能画出图 */
@@ -155,23 +155,32 @@ class SqlFlowAssemblerTest {
         assertEquals(2, edges(payload).size(), "两个字段两行线");
     }
 
-    /** 盒高必须由行数算出来：前端不再量字，对不上就是行溢出盒外 */
+    /**
+     * 落位只到网格：给层号和同层序号，不给像素。
+     *
+     * <p>盒高取决于列名被浏览器排成几行，服务端量不了；一旦响应里混进猜出来的像素，
+     * 前端就得再写一堆兜底去纠正它。像素归浏览器这件事由这一条钉住——后端多给一个
+     * {@code x}，测试就该红。
+     */
     @Test
-    void boxGeometryFollowsRowCount() {
+    void placementIsAGridAndCarriesNoPixels() {
         Map<String, Object> payload = payloadOf(SIMPLE, null);
 
         for (Map<String, Object> box : boxes(payload)) {
             List<Map<String, Object>> rows = list(box, "columns");
-            assertEquals(SqlFlowLayout.BOX_PAD + rows.size() * SqlFlowLayout.ROW_H,
-                    num(box, "height"), 0.001, "盒高与行数对不上：" + label(box));
-            assertEquals(SqlFlowLayout.BOX_W, num(box, "width"), 0.001);
+            assertFalse(box.containsKey("x") || box.containsKey("y")
+                            || box.containsKey("width") || box.containsKey("height"),
+                    "盒子里还有服务端算的像素：" + box);
+            assertTrue(box.containsKey("layer") && box.containsKey("slot"),
+                    "盒子没落到网格上，前端无从排：" + box.get("id"));
             for (int i = 0; i < rows.size(); i++) {
                 Map<String, Object> row = rows.get(i);
-                assertEquals(num(box, "x") + 1, num(row, "x"), 0.001, "行没贴着盒左边");
-                assertEquals(num(box, "y") + SqlFlowLayout.ROW_TOP + i * SqlFlowLayout.ROW_H,
-                        num(row, "y"), 0.001, "第 " + i + " 行没落在盒内");
-                assertEquals(SqlFlowLayout.ROW_W, num(row, "width"), 0.001);
-                assertEquals(SqlFlowLayout.ROW_H, num(row, "height"), 0.001);
+                assertEquals(box.get("id") + "_c" + i, row.get("id"),
+                        "行标识不是「盒_序号」，前端没法照着排 DOM");
+                assertFalse(row.containsKey("x") || row.containsKey("y"), "格子里还有像素");
+                if ("relation".equals(row.get("kind"))) {
+                    continue; // 表级关系行不是模型列，下面这条不变量只管真列
+                }
                 assertNotNull(row.get("modelId"), "行没带模型标识，前端反查不到列");
             }
         }
@@ -193,6 +202,9 @@ class SqlFlowAssemblerTest {
             assertTrue(ranks.containsKey(relation),
                     "盒子的 qualifiedName 不是图上的关系标识，前端拿它打不开那张表：" + box.get("id"));
             for (Map<String, Object> row : list(box, "columns")) {
+                if ("relation".equals(row.get("kind"))) {
+                    continue; // 表级关系行带的是关系本体，不带列前缀是设计内
+                }
                 assertTrue(String.valueOf(row.get("qualifiedName")).startsWith(relation + "."),
                         "行的 qualifiedName 对不上它所在的盒：" + row.get("id"));
             }
@@ -210,9 +222,9 @@ class SqlFlowAssemblerTest {
         assertTrue(warning.contains("自环"), "线少了却没说为什么，就是让用户自己猜：" + warning);
     }
 
-    /** 数据流方向必须与层号一致：下游盒永远在右，图例的"第几层"才不跟图吵架 */
+    /** 数据流方向必须与层号一致：下游盒永远在右边那一层，图例的"第几层"才不跟图吵架 */
     @Test
-    void downstreamBoxSitsToTheRight() {
+    void downstreamBoxSitsInALaterLayer() {
         Map<String, Object> payload = payloadOf(
                 "INSERT INTO dwd.mid SELECT id FROM ods.src;\n"
                         + "INSERT INTO dws.fin SELECT id FROM dwd.mid;", null);
@@ -220,10 +232,11 @@ class SqlFlowAssemblerTest {
         Map<String, Object> src = boxNamed(payload, "src");
         Map<String, Object> mid = boxNamed(payload, "mid");
         Map<String, Object> fin = boxNamed(payload, "fin");
-        assertTrue(num(src, "x") < num(mid, "x"), "第一跳没在左边");
-        assertTrue(num(mid, "x") < num(fin, "x"), "第二跳没在右边");
-        assertEquals(0, ((Number) src.get("layer")).intValue());
-        assertEquals(2, ((Number) fin.get("layer")).intValue());
+        assertTrue(intOf(src, "layer") < intOf(mid, "layer"), "第一跳没在更早的层");
+        assertTrue(intOf(mid, "layer") < intOf(fin, "layer"), "第二跳没在更晚的层");
+        assertEquals(0, intOf(src, "layer"));
+        assertEquals(2, intOf(fin, "layer"));
+        assertEquals(0, intOf(mid, "slot"), "同层只有一个盒时序号从 0 起");
     }
 
     /** CTE 是链路上真实的一站：它自己成盒、被标成中间关系，而不是折进一条直连边 */
@@ -440,7 +453,11 @@ class SqlFlowAssemblerTest {
         assertEquals(rowNames(boxNamed(payload, "wide")).size(), painted);
         int onCanvas = 0;
         for (Map<String, Object> box : boxes(payload)) {
-            onCanvas += list(box, "columns").size();
+            for (Map<String, Object> row : list(box, "columns")) {
+                if (!"relation".equals(row.get("kind"))) {
+                    onCanvas++; // RelationRows 挂点不进"字段行"口径
+                }
+            }
         }
         assertEquals(onCanvas, ((Number) map(payload, "metaInfo").get("rowCount")).intValue());
         int listed = 0;
@@ -489,5 +506,124 @@ class SqlFlowAssemblerTest {
             sql.append(i == 0 ? "" : ", ").append("c").append(i).append(" AS c").append(i);
         }
         return sql.append(" FROM ods.src;").toString();
+    }
+
+    // ---------- 表级关系行（RelationRows） ----------
+
+    /** join 键不进 SELECT 清单：dim 对目标表只有表级链路，字段视图原先会让它凭空消失 */
+    private static final String JOIN_ONE_SIDED =
+            "INSERT INTO dwd.tgt SELECT s.a FROM ods.src s JOIN ods.dim d ON s.k = d.k;";
+
+    private static final String JOIN_BOTH_SIDED =
+            "INSERT INTO dwd.tgt SELECT s.a, d.b FROM ods.src s JOIN ods.dim d ON s.k = d.k;";
+
+    private static List<Map<String, Object>> relEdges(Map<String, Object> payload) {
+        List<Map<String, Object>> hits = new ArrayList<>();
+        for (Map<String, Object> edge : edges(payload)) {
+            if ("tableRel".equals(edge.get("kind"))) {
+                hits.add(edge);
+            }
+        }
+        return hits;
+    }
+
+    private static Map<String, Object> relationRowOf(Map<String, Object> payload, String name) {
+        for (Map<String, Object> row : list(boxNamed(payload, name), "columns")) {
+            if ("relation".equals(row.get("kind"))) {
+                return row;
+            }
+        }
+        throw new AssertionError("盒 " + name + " 上没有 RelationRows 行");
+    }
+
+    /** 只有表级血缘的表对：dim 有了盒、RelationRows 行，虚线挂在两行之间并自带语句证据 */
+    @Test
+    void tableOnlyPairsGetRelationRows() {
+        Map<String, Object> payload = payloadOf(JOIN_ONE_SIDED, null);
+
+        Map<String, Object> dim = boxNamed(payload, "dim");
+        List<Map<String, Object>> dimRows = list(dim, "columns");
+        assertEquals(1, dimRows.size(), "dim 一个列都没上路径，盒里只该有关系行");
+        Map<String, Object> rel = dimRows.get(0);
+        assertEquals("RelationRows", rel.get("name"));
+        assertEquals("relation", rel.get("kind"));
+        assertEquals("ods.dim", rel.get("qualifiedName"), "关系行带关系本体，行键是实现细节");
+        assertNull(rel.get("modelId"), "关系行不是模型列，不该有模型标识");
+
+        List<Map<String, Object>> rels = relEdges(payload);
+        assertEquals(1, rels.size(), "src→tgt 有字段级通路，不该再画表级线");
+        Map<String, Object> relEdge = rels.get(0);
+        assertEquals(rel.get("id"), relEdge.get("sourceId"), "虚线起点是 dim 的关系行");
+        Map<String, Object> tgtRel = relationRowOf(payload, "tgt");
+        assertEquals(tgtRel.get("id"), relEdge.get("targetId"), "虚线终点是 tgt 的关系行");
+        Map<String, Object> detail = map(relEdge, "tableRel");
+        assertEquals("ods.dim", detail.get("from"));
+        assertEquals("dwd.tgt", detail.get("to"));
+        assertNotNull(detail.get("jobId"), "点虚线要能给到语句标识");
+        assertTrue(String.valueOf(detail.get("sqlText")).contains("JOIN"),
+                "语句原文跟着虚线走，右栏才有得显示");
+        assertFalse(map(map(payload, "graph"), "relationshipIdMap").containsKey(relEdge.get("id")),
+                "表级边背后没有字段关系，不能混进 relationshipIdMap");
+        assertEquals(1, intOf(map(payload, "metaInfo"), "tableRelSegments"));
+        /*
+         * 两种行分开报数：标题念的是"N 字段行"，把 RelationRows 挂点算进去，
+         * "画进盒子 + N 列未画 = 总列数"这笔账就差出几个根本不是列的行。
+         */
+        int relRows = 0;
+        int realRows = 0;
+        for (Map<String, Object> box : boxes(payload)) {
+            for (Map<String, Object> row : list(box, "columns")) {
+                if ("relation".equals(row.get("kind"))) {
+                    relRows++;
+                } else {
+                    realRows++;
+                }
+            }
+        }
+        Map<String, Object> relMeta = map(payload, "metaInfo");
+        assertEquals(relRows, intOf(relMeta, "tableRelRows"), "关系行没单独报数");
+        assertEquals(realRows, intOf(relMeta, "rowCount"), "字段行口径里混进了关系行");
+        String warning = String.valueOf(map(payload, "metaInfo").get("warning"));
+        assertTrue(warning.contains("表级关系"), "新来一种线必须在告警里说清读法：" + warning);
+    }
+
+    /** 两端都有字段级通路时不画表级线：同一件事不说两遍 */
+    @Test
+    void columnPathSuppressesRelationRows() {
+        Map<String, Object> payload = payloadOf(JOIN_BOTH_SIDED, null);
+
+        assertTrue(relEdges(payload).isEmpty(), "字段级通路已经把这对表连起来了");
+        for (Map<String, Object> box : boxes(payload)) {
+            for (Map<String, Object> row : list(box, "columns")) {
+                assertFalse("RelationRows".equals(row.get("name")),
+                        "没有表级对就不该有关系行：" + box.get("id"));
+            }
+        }
+        assertEquals(0, intOf(map(payload, "metaInfo"), "tableRelSegments"));
+    }
+
+    /** 关系行不进数据模型：右栏"列出字段"、columnCount 都不该出现它 */
+    @Test
+    void relationRowsStayOutOfTheModel() {
+        Map<String, Object> payload = payloadOf(JOIN_ONE_SIDED, null);
+
+        Map<String, Object> dim = modelOf(payload, "dim");
+        assertEquals(0, intOf(dim, "columnCount"), "关系行不是列，不能计入 columnCount");
+        assertTrue(list(dim, "columns").isEmpty(), "dim 本来就没有上路径的列，模型清单要空着");
+        for (Map<String, Object> entity : modelEntities(payload)) {
+            for (Map<String, Object> column : list(entity, "columns")) {
+                assertFalse("RelationRows".equals(column.get("name")),
+                        "模型列清单里混进了关系行：" + entity.get("qualifiedName"));
+            }
+        }
+    }
+
+    /** 同一份输入两次装配，表级关系行与虚线必须长在同一处 */
+    @Test
+    void relationRowsAreDeterministic() {
+        Map<String, Object> first = payloadOf(JOIN_ONE_SIDED, null);
+        Map<String, Object> second = payloadOf(JOIN_ONE_SIDED, null);
+
+        assertEquals(first, second);
     }
 }

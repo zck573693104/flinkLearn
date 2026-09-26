@@ -1,4 +1,4 @@
-/** 两张图共用的挂载、节点画法、分层排布与超限判断。 */
+/** 表级 DAG 的挂载、节点画法、分层排布与超限判断。字段链路在 sqlflowView.js，它不走这里。 */
 
 import { ink, layerColor } from './badges.js';
 
@@ -12,14 +12,6 @@ export const NODE_CAP = 300;
  */
 const NODE_FONT_PX = 11;
 const MIN_LABEL_PX = 10;
-
-/**
- * 画盒子/列行的那套 kind（字段视图用），其余（表级图）走通用外观。
- *
- * 盒与行的尺寸不在这里：字段的坐标、盒高、行距一律由 /api/sqlflow/graph 算好下发，
- * 前端再算一份就是两份会走样的真相（见 sqlflowView.js）。
- */
-const BOX_KINDS = '[kind="tableBox"], [kind="hopBox"]';
 
 export function create(el) {
   return window.cytoscape({
@@ -44,40 +36,6 @@ export function create(el) {
           'background-opacity': 1,
           'border-color': ink.nodeLine,
           'border-width': 1,
-          'z-index': 2,
-        },
-      },
-      /* 盒子垫底、线走在中间、行浮在上面：边的端点被 cytoscape 裁到节点边界，
-         所以线只会在盒体上走明路，不会被色块盖掉半截。 */
-      {
-        selector: BOX_KINDS,
-        style: {
-          label: '',
-          'background-opacity': 1,
-          'overlay-opacity': 0,
-          'z-index': 0,
-        },
-      },
-      {
-        selector: 'node[kind="headerRow"]',
-        style: {
-          shape: 'rectangle',
-          'font-weight': 700,
-          'text-wrap': 'ellipsis',
-          'text-max-width': '150px',
-          'background-opacity': 1,
-          'overlay-opacity': 0,
-          'z-index': 3,
-        },
-      },
-      {
-        selector: 'node[kind="columnRow"]',
-        style: {
-          shape: 'rectangle',
-          'text-wrap': 'ellipsis',
-          'text-max-width': '150px',
-          'background-opacity': 1,
-          'overlay-opacity': 0,
           'z-index': 2,
         },
       },
@@ -106,52 +64,15 @@ export function create(el) {
 }
 
 /**
- * 节点的基础外观：表级图和字段级图共用一份，避免两种图各写一遍颜色口径。
+ * 节点的基础外观。
  *
- * 物理节点按层号取色、语句内中间关系压成暗底虚线框，都走直接样式；
- * 盒/行/标题行各有各的口径，但层号取色这件事只有"实体"节点参与——
- * 盒体永远是最暗的容器，层号写在标题行上，这样图例的第几层仍然读得出来。
- * 这里把 overlay 显式关掉，是给 setHot() 留出的可视余量。
+ * 物理节点按层号取色、语句内的中间关系压成暗底虚线框。层号取色只有"实体"节点参与，
+ * 图例上第几层是什么颜色，这里就是什么颜色。
+ * 这里把 overlay 显式关掉，是给 setHot() 留出可视余量。
  */
 export function nodePaint(node) {
-  const kind = node.data('kind');
   const local = !!node.data('local');
   const layer = layerColor(node.data('layer'));
-  if (kind === 'tableBox' || kind === 'hopBox') {
-    node.style({
-      'background-color': ink.boxFill,
-      'border-style': kind === 'hopBox' || local ? 'dashed' : 'solid',
-      'border-color': kind === 'hopBox' || local ? ink.localLine : layer,
-      'border-opacity': 1,
-      'border-width': 1.5,
-      'overlay-opacity': 0,
-    });
-    return;
-  }
-  if (kind === 'headerRow') {
-    node.style({
-      'background-color': local ? ink.localFill : layer,
-      color: local ? ink.localText : ink.nodeText,
-      'border-style': local ? 'dashed' : 'solid',
-      'border-color': local ? ink.localLine : layer,
-      'border-opacity': 1,
-      'border-width': 1,
-      'overlay-opacity': 0,
-    });
-    return;
-  }
-  if (kind === 'columnRow') {
-    node.style({
-      'background-color': ink.rowFill,
-      color: ink.rowText,
-      'border-width': 1,
-      'border-style': 'solid',
-      'border-color': ink.rowLine,
-      'border-opacity': 1,
-      'overlay-opacity': 0,
-    });
-    return;
-  }
   node.style({
     'background-color': local ? ink.localFill : layer,
     color: local ? ink.localText : ink.nodeText,
@@ -295,9 +216,6 @@ function place(columns, direction) {
  * fit 到中间栏只剩 0.39 缩放，字号 4px、线宽 0.6px——数据全对但看上去"没有图"；
  * 而且下游节点会排到上游左边，跟"第几层"图例直接矛盾。层号本来就是这套图的语义。
  * 朝向按容器实际尺寸挑：谁的 fit 缩放大就用谁，避免长条图被压成一条线。
- *
- * 只管表级图：字段视图的坐标整个由 /api/sqlflow/graph 算好（见 sqlflowView.js），
- * 在这里再排一次就是两份会走样的真相。
  */
 export function runLayout(cy) {
   const columns = groupByLayer(cy.nodes());
@@ -339,9 +257,7 @@ export function replace(cy, elements) {
  * 超出容器的部分交给拖动画布（minZoom 仍允许用户自己缩回去看整体形状）。
  */
 export function fit(cy) {
-  /* 只看露在外面的那些：字段视图裁剪之后盒子和行是 display:none，
-     拿它们算字号基准和"放不下多少个"会报出一个用户根本没看见的数字。 */
-  const nodes = cy.nodes(':visible');
+  const nodes = cy.nodes();
   if (!nodes.length) {
     return { zoom: cy.zoom(), cramped: false, warning: '' };
   }
@@ -350,18 +266,8 @@ export function fit(cy) {
      所以每次 framing 前自己去刷一遍——否则缩放和"装不下"的结论都是对着旧盒子算出来的。 */
   cy.resize();
   cy.fit(nodes, FIT_PADDING);
-  /* 可读下限按"最小的那个有字的节点"算：字段视图里盒子不写字，拿 nodes[0]（通常是盒子）
-     来定字号等于用空气做基准。 */
-  let fontPx = Infinity;
-  nodes.forEach((node) => {
-    if (node.data('label')) {
-      fontPx = Math.min(fontPx, parseFloat(node.style('font-size')) || NODE_FONT_PX);
-    }
-  });
-  if (!Number.isFinite(fontPx)) {
-    fontPx = NODE_FONT_PX;
-  }
-  const floor = Math.max(cy.minZoom(), MIN_LABEL_PX / fontPx);
+  /* 表级节点一律带标签、也不覆写字号，所以可读下限直接拿 NODE_FONT_PX 换算就行。 */
+  const floor = Math.max(cy.minZoom(), MIN_LABEL_PX / NODE_FONT_PX);
   if (cy.zoom() >= floor) {
     return { zoom: cy.zoom(), cramped: false, warning: '' };
   }
@@ -369,12 +275,10 @@ export function fit(cy) {
   const box = nodes.boundingBox();
   cy.pan({ x: FIT_PADDING - box.x1 * floor, y: FIT_PADDING - box.y1 * floor });
   const canvas = `${Math.round(cy.width())}x${Math.round(cy.height())}`;
-  // 报"多少个"要报用户眼里的那个数：字段视图的盒体和空盒子不算信息量
-  const labeled = nodes.filter((node) => node.data('label')).length || nodes.length;
   return {
     zoom: floor,
     cramped: true,
-    warning: `画布 ${canvas} 放不下 ${labeled} 个节点：已放大到 ${floor.toFixed(2)} 倍保住标签，`
+    warning: `画布 ${canvas} 放不下 ${nodes.length} 个节点：已放大到 ${floor.toFixed(2)} 倍保住标签，`
       + '整图请拖动画布或滚轮缩小',
   };
 }

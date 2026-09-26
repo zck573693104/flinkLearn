@@ -12,51 +12,37 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 服务端算布局：每个盒、每一行的坐标都进响应，前端只负责照着画。
+ * 服务端算"这一格在哪一片"：层号、同层序号、盒与行的标识、哪条线连哪两格。
  *
- * <p>为什么搬到服务端：布局口径一旦只有前端懂，"这张图长什么样"就没法在单测里断言，
- * 也没法被别的消费方（导出、截图服务、第二个前端）复用。坐标是这次请求的一部分结论，
- * 不是渲染副产品。
+ * <p>为什么这些结论留在后端：层号就是这套图的语义（第几层 = 距源头几跳），同层序号是
+ * 重心法减叉的结论。它们一旦只有前端懂，"这张图该长成什么样"就没法在单测里断言，
+ * 也没法被第二个消费方复用。
  *
- * <p>尺寸照抄对方：盒宽 162、行高 16、标题带 21.96875、盒高 25.96875 + 16 * 行数。
- * 列坐标以左上角为原点（对方口径），cytoscape 用的是中心点，前端换算。
+ * <p>为什么像素不留在后端：盒子多高取决于列名被浏览器排成几行，服务端只能靠
+ * "一个字符 7.2px" 去猜。猜错一次，前端就要多写一段兜底（字号下限、重排、fit 的
+ * 可读性判断），这套东西上一版长了 350 行，最后还是画不出能读的图。
+ * 现在服务端给网格坐标（layer/slot），浏览器给像素——盒高交给内容，线在量完之后画。
+ *
+ * <p>标识是这套图唯一的地址：盒 {@code b3}、行 {@code b3_c1}、边 {@code e7}。
+ * 写成 CSS 合法标识符，因为前端要拿它当 DOM id 直接 getElementById。
  */
 final class SqlFlowLayout {
 
-    /** 盒宽：与对方一致，一行一个字段时这个宽度读得出 20 个字符左右的列名 */
-    static final double BOX_W = 162;
-    /** 一行的高度 */
-    static final double ROW_H = 16;
-    static final double ROW_W = 160;
-    /** 标题带高度：盒子里第一行距离盒顶 */
-    static final double ROW_TOP = 21.96875;
-    /** 盒高 = 标题带 + 行高 * 行数，多出来的 4px 是盒底留白 */
-    static final double BOX_PAD = 25.96875;
-    /** 层与层之间沿 X 轴的间距 */
-    private static final double RANK_GAP = 220;
-    /** 同一层里盒与盒的间距 */
-    private static final double BOX_GAP = 22;
-    /** 标签字号与行高：字号 12 是对方图上读得出的最小值 */
-    private static final String FONT_SIZE = "12";
-    private static final String FONT_FAMILY = "Cascadia Mono, Consolas, monospace";
-    private static final double CHAR_W = 7.2;
-
-    /** 一个盒落好位的结果 */
+    /** 一个盒落好位的结果：只到网格，不到像素 */
     static final class PlacedBox {
 
         private final SqlFlowChain.Box box;
         private final String id;
-        private final double x;
-        private final double y;
-        private final double height;
+        private final int layer;
+        private final int slot;
+        /** 字段标识 → 图上行标识，顺序就是这一盒里行的显示顺序 */
         private final Map<String, String> rowIds = new LinkedHashMap<String, String>();
 
-        private PlacedBox(SqlFlowChain.Box box, String id, double x, double y, double height) {
+        private PlacedBox(SqlFlowChain.Box box, String id, int layer, int slot) {
             this.box = box;
             this.id = id;
-            this.x = x;
-            this.y = y;
-            this.height = height;
+            this.layer = layer;
+            this.slot = slot;
         }
 
         SqlFlowChain.Box getBox() {
@@ -67,11 +53,11 @@ final class SqlFlowLayout {
             return id;
         }
 
-        /** 字段标识 → 图上行标识；表级视图没有行，返回空 */
         Map<String, String> getRowIds() {
             return rowIds;
         }
 
+        /** 按落好的顺序取行：预算裁掉的那些不在 rowIds 里，自然不会出现 */
         List<SqlFlowChain.Row> getRows() {
             List<SqlFlowChain.Row> rows = new ArrayList<>();
             for (String columnId : rowIds.keySet()) {
@@ -81,18 +67,6 @@ final class SqlFlowLayout {
                 }
             }
             return rows;
-        }
-
-        double getX() {
-            return x;
-        }
-
-        double getY() {
-            return y;
-        }
-
-        double getHeight() {
-            return height;
         }
     }
 
@@ -116,6 +90,31 @@ final class SqlFlowLayout {
             return id;
         }
 
+        SqlFlowChain.Segment getSegment() {
+            return segment;
+        }
+    }
+
+    /** 表级关系段落好位的结果：两端是 RelationRows 行（行被预算裁掉时退到盒本身） */
+    static final class PlacedRelEdge {
+
+        private final String id;
+        private final String sourceId;
+        private final String targetId;
+        private final SqlFlowChain.RelSegment rel;
+
+        private PlacedRelEdge(String id, String sourceId, String targetId,
+                              SqlFlowChain.RelSegment rel) {
+            this.id = id;
+            this.sourceId = sourceId;
+            this.targetId = targetId;
+            this.rel = rel;
+        }
+
+        String getId() {
+            return id;
+        }
+
         String getSourceId() {
             return sourceId;
         }
@@ -124,16 +123,17 @@ final class SqlFlowLayout {
             return targetId;
         }
 
-        SqlFlowChain.Segment getSegment() {
-            return segment;
+        SqlFlowChain.RelSegment getRel() {
+            return rel;
         }
     }
 
-    /** 一次落位的全部结论：盒、线、层号。盒与行的图上标识都在这里，装配层靠它反查模型 */
+    /** 一次落位的全部结论。盒与行的图上标识都在这里，装配层靠它反查模型 */
     static final class Plan {
 
         private final List<PlacedBox> boxes = new ArrayList<PlacedBox>();
         private final List<PlacedEdge> edges = new ArrayList<PlacedEdge>();
+        private final List<PlacedRelEdge> relEdges = new ArrayList<PlacedRelEdge>();
         private final Map<String, Integer> ranks = new LinkedHashMap<String, Integer>();
         private final Set<String> cyclic = new LinkedHashSet<String>();
         /** 留在预算里、却因为两端重合（自环）或盒子没落位而画不出线的段 */
@@ -145,6 +145,10 @@ final class SqlFlowLayout {
 
         List<PlacedEdge> getEdges() {
             return edges;
+        }
+
+        List<PlacedRelEdge> getRelEdges() {
+            return relEdges;
         }
 
         Map<String, Integer> getRanks() {
@@ -168,9 +172,11 @@ final class SqlFlowLayout {
     /**
      * @param rowsOf 每个盒最终留下哪些行（已按可读性预算裁剪），键为关系标识
      * @param edges 参与落位的链路段；一行的盒都不画时线连盒
+     * @param rels 只有表级血缘的表对：线连两盒的 RelationRows 行，行没画出来就退到盒
      */
     static Plan plan(SqlFlowChain chain, Map<String, List<SqlFlowChain.Row>> rowsOf,
-                     Collection<SqlFlowChain.Segment> edges) {
+                     Collection<SqlFlowChain.Segment> edges,
+                     Collection<SqlFlowChain.RelSegment> rels) {
         Plan plan = new Plan();
         List<String> relations = new ArrayList<>(chain.getBoxes().keySet());
         if (relations.isEmpty()) {
@@ -182,29 +188,23 @@ final class SqlFlowLayout {
         plan.cyclic.addAll(layers.getCyclic());
         barycenter(columns, successors);
 
-        double span = 0;
-        for (List<String> group : columns) {
-            span = Math.max(span, crossOf(group, rowsOf));
-        }
         int boxIndex = 0;
         Map<String, PlacedBox> placed = new LinkedHashMap<String, PlacedBox>();
-        for (int rankIndex = 0; rankIndex < columns.size(); rankIndex++) {
-            double cursor = (span - crossOf(columns.get(rankIndex), rowsOf)) / 2;
-            for (String relation : columns.get(rankIndex)) {
+        for (int layer = 0; layer < columns.size(); layer++) {
+            List<String> column = columns.get(layer);
+            for (int slot = 0; slot < column.size(); slot++) {
+                String relation = column.get(slot);
                 SqlFlowChain.Box box = chain.getBoxes().get(relation);
+                PlacedBox spot = new PlacedBox(box, "b" + boxIndex++, layer, slot);
                 List<SqlFlowChain.Row> rows = rowsOf.get(relation);
-                int rowCount = rows == null ? 0 : rows.size();
-                double height = BOX_PAD + rowCount * ROW_H;
-                String id = "n" + boxIndex++;
-                PlacedBox spot = new PlacedBox(box, id, rankIndex * (BOX_W + RANK_GAP), cursor,
-                        height);
-                for (int i = 0; i < rowCount; i++) {
-                    spot.rowIds.put(rows.get(i).getColumnId(), id + "::n" + i);
+                if (rows != null) {
+                    for (int i = 0; i < rows.size(); i++) {
+                        spot.rowIds.put(rows.get(i).getColumnId(), spot.id + "_c" + i);
+                    }
                 }
                 placed.put(relation, spot);
                 plan.boxes.add(spot);
-                plan.ranks.put(relation, rankIndex);
-                cursor += height + BOX_GAP;
+                plan.ranks.put(relation, layer);
             }
         }
         int edgeIndex = 0;
@@ -223,12 +223,28 @@ final class SqlFlowLayout {
             }
             plan.edges.add(new PlacedEdge("e" + edgeIndex++, source, target, segment));
         }
+        for (SqlFlowChain.RelSegment rel : rels) {
+            /*
+             * 两端一定落在格子上：expandRelations 只给成对的盒补关系行，哪一端本来没盒就当场
+             * 造一个（造不出就整对放弃，不会留下单端的段）。而行标识带着盒前缀，两个不同的盒
+             * 挤不出同一个 id——这里没有"自环"可言，不再占 skipped 的计数与文案。
+             */
+            String source = relEndpoint(placed.get(rel.getFrom()));
+            String target = relEndpoint(placed.get(rel.getTo()));
+            plan.relEdges.add(new PlacedRelEdge("e" + edgeIndex++, source, target, rel));
+        }
         return plan;
     }
 
     /** 行的图上标识；这一行没被留下（预算裁掉了）时退回盒子本身，线连盒不连空位 */
     private static String endpoint(PlacedBox box, String columnId) {
         String row = box.getRowIds().get(columnId);
+        return row == null ? box.getId() : row;
+    }
+
+    /** RelationRows 行的图上标识：行没进预算就接在盒上，表级关系不该因为预算而消失 */
+    private static String relEndpoint(PlacedBox box) {
+        String row = box.getRowIds().get(SqlFlowChain.relationRowKey(box.getBox().getRelation()));
         return row == null ? box.getId() : row;
     }
 
@@ -245,7 +261,7 @@ final class SqlFlowLayout {
             bucket.add(relation);
         }
         List<Integer> layers = new ArrayList<>(buckets.keySet());
-        java.util.Collections.sort(layers);
+        Collections.sort(layers);
         List<List<String>> columns = new ArrayList<>();
         for (Integer layer : layers) {
             columns.add(buckets.get(layer));
@@ -301,50 +317,41 @@ final class SqlFlowLayout {
         return hits == 0 ? fallback : sum / hits;
     }
 
-    private static double crossOf(List<String> relations,
-                                  Map<String, List<SqlFlowChain.Row>> rowsOf) {
-        double total = 0;
-        for (String relation : relations) {
-            List<SqlFlowChain.Row> rows = rowsOf.get(relation);
-            int count = rows == null ? 0 : rows.size();
-            total += BOX_PAD + count * ROW_H + BOX_GAP;
-        }
-        return Math.max(0, total - BOX_GAP);
-    }
-
-    /** 盒的 JSON：坐标照对方口径写左上角，标签度量一并给出，前端不再量字 */
+    /**
+     * 盒的 JSON：一份"够画出一个盒子"的语义描述。
+     *
+     * <p>{@code qualifiedName} 必须和请求参数能认的那个名字一致（前端点盒顶要能以这张表
+     * 为中心重开一片），短名 {@code name} 只是标签，同名短名解不出地址——所以两个都给。
+     */
     static Map<String, Object> boxJson(PlacedBox box, String modelId,
-                                       Map<String, String> rowModelIds, Integer layer) {
+                                       Map<String, String> rowModelIds) {
         List<Map<String, Object>> rows = new ArrayList<>();
-        int index = 0;
         for (SqlFlowChain.Row row : box.getRows()) {
             Map<String, Object> json = new LinkedHashMap<>();
             json.put("id", box.rowIds.get(row.getColumnId()));
-            json.put("x", box.x + 1);
-            json.put("y", box.y + ROW_TOP + index * ROW_H);
-            json.put("width", ROW_W);
-            json.put("height", ROW_H);
-            json.put("label", labelJson(row.getColumn(), ROW_W - 8, 13.96875));
-            json.put("qualifiedName", row.getColumnId());
+            json.put("name", row.getColumn());
+            if (row.isRelation()) {
+                /*
+                 * 表级关系行不是模型列：kind 让前端把它画成虚线挂点；
+                 * qualifiedName 给关系本体——右栏证据、定位搜索都用得上，行键里的
+                 * "::relation" 后缀是实现细节，不出口。
+                 */
+                json.put("kind", "relation");
+                json.put("qualifiedName", box.box.getRelation());
+            } else {
+                json.put("qualifiedName", row.getColumnId());
+            }
             json.put("modelId", rowModelIds.get(row.getColumnId()));
             rows.add(json);
-            index++;
         }
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("id", box.id);
-        /*
-         * 关系标识必须跟着几何一起下来：前端点盒顶表名要"以这张表为中心重开一片"，
-         * 手里只剩 name（短名）时同名短名解不出来，那个手势就只能默默降级成列字段清单。
-         */
-        json.put("qualifiedName", box.getBox().getRelation());
-        json.put("x", box.x);
-        json.put("y", box.y);
-        json.put("width", BOX_W);
-        json.put("height", box.height);
-        json.put("label", labelJson(box.box.getName(), BOX_W, 17.96875));
+        json.put("name", box.box.getName());
+        json.put("qualifiedName", box.box.getRelation());
         json.put("type", box.box.getType());
         json.put("local", box.box.isLocal());
-        json.put("layer", layer);
+        json.put("layer", box.layer);
+        json.put("slot", box.slot);
         json.put("modelId", modelId);
         json.put("columns", rows);
         return json;
@@ -357,19 +364,6 @@ final class SqlFlowLayout {
         json.put("targetId", edge.targetId);
         // 函数盒那一跳是显示层的表达、不是解析出的事实，前端据此画虚线，不把假因果写实
         json.put("synthetic", edge.getSegment().isSynthetic());
-        return json;
-    }
-
-    private static Map<String, Object> labelJson(String content, double maxWidth, double height) {
-        String text = content == null ? "" : content;
-        Map<String, Object> json = new LinkedHashMap<>();
-        json.put("content", text);
-        json.put("fontSize", FONT_SIZE);
-        json.put("fontFamily", FONT_FAMILY);
-        json.put("width", Math.min(maxWidth, Math.round(CHAR_W * text.length())));
-        json.put("height", height);
-        json.put("x", 0);
-        json.put("y", 0);
         return json;
     }
 }

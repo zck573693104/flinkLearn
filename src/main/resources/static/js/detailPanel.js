@@ -290,6 +290,14 @@ export function renderTableEdge(container, data) {
   if (!data.jobId) {
     container.appendChild(el('p', 'note', '这条边没有 jobId：由文本摘要兜底命名，见 ColumnGraphBuilder.localName()'));
   }
+  /*
+   * 表级关系虚线（RelationRows）把语句原文带在边上：有 sqlText 字段就高亮端点表名。
+   * 用 hasOwnProperty 判断而不是 truthy——表级 DAG 的老边没这个字段，别给它们凭空加
+   * 一块"（快照里没有这条语句的原文）"。
+   */
+  if (Object.prototype.hasOwnProperty.call(data, 'sqlText')) {
+    container.appendChild(sqlBlock(data.sqlText, data.source, data.target));
+  }
 }
 
 /** 试解析结果：落库前的临时视图，用来人工核对新 SQL 的血缘 */

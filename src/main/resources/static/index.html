@@ -85,16 +85,25 @@
     </div>
     <div class="canvas">
       <div id="graph"></div>
+      <!-- 字段链路不画在 cytoscape 上：DOM 摆盒、一层 SVG 走线，盒高交给浏览器排版 -->
+      <div id="sqlflow" hidden></div>
+      <!-- 定位搜索：只在字段视图出现，盒子多了以后"找到那一格"不能靠肉眼 -->
+      <div id="sqlflow-locate" class="locate" hidden>
+        <input id="locate-input" list="locate-items" placeholder="定位表或字段…"
+               autocomplete="off" aria-label="定位表或字段">
+        <datalist id="locate-items"></datalist>
+      </div>
       <!-- 告警写在画布外面就会改变画布高度，而 fit 的结论正是"这个高度装不下"：只能叠在画布上 -->
       <span id="graph-warn" class="warn" role="status"></span>
-      <!-- 字段行旁边的跟随式动作条：操作对象就是刚点的那一行，离远了用户找不回自己点哪儿了 -->
-      <div id="sqlflow-pop" class="pop" role="dialog" aria-label="字段动作" hidden>
-        <p class="pop-title"></p>
-        <div class="pop-tools">
-          <button type="button" data-pop="chain">只看这一列</button>
-          <button type="button" data-pop="columns">列出字段</button>
-          <button type="button" data-pop="reset">复位</button>
-          <button type="button" data-pop="close" class="close" aria-label="关闭">×</button>
+      <!-- 动作条钉在角落：它跟着某一行的话，裁剪/缩放/换图每一样都能把它带偏 -->
+      <div id="sqlflow-bar" class="bar" role="toolbar" aria-label="字段动作" hidden>
+        <span class="bar-grip" aria-hidden="true">⠿</span>
+        <p class="bar-title"></p>
+        <div class="bar-tools">
+          <button type="button" data-bar="chain">只看这一列</button>
+          <button type="button" data-bar="columns">列出字段</button>
+          <button type="button" data-bar="reset">复位</button>
+          <button type="button" data-bar="close" class="close" aria-label="关闭">×</button>
         </div>
       </div>
     </div>

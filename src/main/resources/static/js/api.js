@@ -50,7 +50,7 @@ export const api = {
   columns: (table) => request(`/table/${encodeURIComponent(table)}/columns`),
   issues: (type) => request(`/issues${query({ type })}`),
   parse: (sql) => request('/parse', json({ sql })),
-  /** 字段级血缘：一次请求拿回数据模型 + 服务端算好的坐标，前端不再拼第二份真相 */
+  /** 字段级血缘：一次请求拿回数据模型 + 证据 + 网格落位（层号/同层序号），像素不在这份响应里 */
   sqlflowGraph: (params) => request(`/sqlflow/graph${query(params)}`),
   sqlflowParse: (sql, focus) => request('/sqlflow/graph', json({ sqltext: sql, focus })),
   scan: (dir) => request('/scan', json(dir ? { dir } : {})),

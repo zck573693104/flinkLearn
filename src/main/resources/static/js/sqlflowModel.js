@@ -33,7 +33,7 @@ export function indexSqlFlow(data) {
     columnIdByName: new Map(),
     relationships: new Map(),
     processes: new Map(),
-    /** 图上标识 → 盒 / 行，值里带着服务端算好的坐标 */
+    /** 图上标识 → 盒 / 行，值里带着服务端算好的落位（层号、同层序号） */
     boxes: new Map(),
     rows: new Map(),
     /** 列模型标识 → 图上标识：查不到就是没画进盒子，这是 uiVisible 的另一种写法 */
@@ -57,7 +57,14 @@ export function indexSqlFlow(data) {
     index.boxes.set(box.id, box);
     (box.columns || []).forEach((row) => {
       index.rows.set(row.id, Object.assign({ boxId: box.id }, row));
-      index.rowIdOfColumn.set(row.modelId, row.id);
+      /*
+       * 表级关系行没有模型标识：往"列模型标识 → 图上标识"里塞一个 null 键，
+       * 下一次带着空 target.id 回来的 relationship 就会查中它，把开场选中的那一行
+       * 领到一个根本不是列的行上。这一行只归 rows 管。
+       */
+      if (row.modelId !== null && row.modelId !== undefined) {
+        index.rowIdOfColumn.set(row.modelId, row.id);
+      }
     });
   });
   index.relationshipsOfEdge = new Map(Object.entries((payload.graph || {}).relationshipIdMap || {}));

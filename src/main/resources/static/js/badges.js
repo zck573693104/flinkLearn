@@ -63,17 +63,30 @@ export const ink = {
   canvasBg: token('--ink-0', '#05070c'),
 };
 
-/** 加工方式决定线的画法：低置信度的边必须在视觉上就和直通边区分开 */
+/**
+ * 加工方式决定线的画法：低置信度的边必须在视觉上就和直通边区分开。
+ *
+ * 字段视图的线现在是 SVG（见 sqlflowView.js），所以这里给的就是描边口径：
+ * 颜色、粗细、dash。图例从同一张表生成，屏上的线和图例块不可能各说各话。
+ */
 export const EDGE_STYLE = {
-  IDENTITY: { 'line-color': token('--edge-identity', FALLBACK.edgeIdentity), 'target-arrow-color': token('--edge-identity', FALLBACK.edgeIdentity) },
-  EXPRESSION: { 'line-color': token('--edge-expression', FALLBACK.edgeExpression), 'target-arrow-color': token('--edge-expression', FALLBACK.edgeExpression) },
-  AGGREGATE: { 'line-color': token('--edge-aggregate', FALLBACK.edgeAggregate), 'target-arrow-color': token('--edge-aggregate', FALLBACK.edgeAggregate), width: 2.2 },
-  CONSTANT: { 'line-color': token('--edge-constant', FALLBACK.edgeConstant), 'target-arrow-color': token('--edge-constant', FALLBACK.edgeConstant), 'line-style': 'dashed' },
-  POSITIONAL: { 'line-color': token('--edge-positional', FALLBACK.edgePositional), 'target-arrow-color': token('--edge-positional', FALLBACK.edgePositional) },
-  UNNAMED: { 'line-color': token('--edge-unnamed', FALLBACK.edgeUnnamed), 'target-arrow-color': token('--edge-unnamed', FALLBACK.edgeUnnamed), 'line-style': 'dotted' },
-  STAR: { 'line-color': token('--edge-star', FALLBACK.edgeStar), 'target-arrow-color': token('--edge-star', FALLBACK.edgeStar), 'line-style': 'dotted', width: 2 },
-  UNRESOLVED: { 'line-color': token('--edge-unresolved', FALLBACK.edgeUnresolved), 'target-arrow-color': token('--edge-unresolved', FALLBACK.edgeUnresolved), 'line-style': 'dashed', width: 2 },
+  IDENTITY: { color: token('--edge-identity', FALLBACK.edgeIdentity), width: 1.4, dash: '' },
+  EXPRESSION: { color: token('--edge-expression', FALLBACK.edgeExpression), width: 1.6, dash: '' },
+  AGGREGATE: { color: token('--edge-aggregate', FALLBACK.edgeAggregate), width: 2.2, dash: '' },
+  CONSTANT: { color: token('--edge-constant', FALLBACK.edgeConstant), width: 1.6, dash: '6 4' },
+  POSITIONAL: { color: token('--edge-positional', FALLBACK.edgePositional), width: 1.6, dash: '' },
+  UNNAMED: { color: token('--edge-unnamed', FALLBACK.edgeUnnamed), width: 1.6, dash: '1 4' },
+  STAR: { color: token('--edge-star', FALLBACK.edgeStar), width: 2, dash: '1 4' },
+  UNRESOLVED: { color: token('--edge-unresolved', FALLBACK.edgeUnresolved), width: 2, dash: '6 4' },
 };
+
+/** 中间站那一跳是显示层的表达、不是解析出的事实：一律点线，不和真因果混在一起 */
+export const SYNTHETIC_EDGE = { width: 1.3, dash: '2 4' };
+
+/** 解析器新加一种加工方式而这张表还没跟上时，画默认色而不是画不出来 */
+export function edgeInk(derivation) {
+  return EDGE_STYLE[derivation] || { color: ink.edgeDefault, width: 1.5, dash: '' };
+}
 
 export function derivationLabel(derivation) {
   return DERIVATION_HINT[derivation] || derivation || '未知';

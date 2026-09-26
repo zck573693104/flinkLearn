@@ -19,12 +19,15 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 一次请求装配出一份"数据模型 + 布局"：对方一次 {@code sqlflow/graph} 调用给全的做法。
+ * 一次请求装配出一份"数据模型 + 落位结论"：对方一次 {@code sqlflow/graph} 调用给全的做法。
  *
  * <p>为什么把模型、布局、统计放进同一个响应：字段级血缘的三件事本来就互相牵着——点一行要知道
  * 它是哪个模型对象（{@code listIdMap}）、这条链的证据在哪条语句上（{@code relationshipIdMap}）、
  * 顶栏那几个数字得和图上看见的一致（{@code summary}）。分成多个端点就会各说各话，
  * 还要在浏览器里再拼一次。
+ *
+ * <p>落位只到网格（层号 + 同层序号），不到像素：盒子多高取决于浏览器把那串列名排成几行，
+ * 服务端量不了，硬量就变成前端的一堆兜底。
  *
  * <p>两处口径与对方有意不同，都是这套系统的事实：证据（加工方式、置信度、引擎、语句）挂在
  * relationship 上而不只是表达式；语句标识用我们的 {@code jobId}（文件名#序号）。
@@ -91,7 +94,8 @@ public final class SqlFlowAssembler {
         Rows rows = planRows(chain);
         boolean drawn = chain.getBoxes().size() <= BOX_CAP;
         SqlFlowLayout.Plan plan = drawn
-                ? SqlFlowLayout.plan(chain, rows.map, rows.kept) : new SqlFlowLayout.Plan();
+                ? SqlFlowLayout.plan(chain, rows.map, rows.kept, rows.relCandidates)
+                : new SqlFlowLayout.Plan();
 
         number(chain, rows);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
@@ -118,12 +122,14 @@ public final class SqlFlowAssembler {
         private final int droppedSegments;
         /** 关系标识 → 连模型都没登记进去的列数（超出 {@code MODEL_ROWS_CAP} 的部分） */
         private final Map<String, Integer> hidden;
+        /** 全部候选表级关系段：行被预算裁掉时线退到接在盒上，不靠这个列表决定画不画 */
+        private final List<SqlFlowChain.RelSegment> relCandidates;
 
         private Rows(Map<String, List<SqlFlowChain.Row>> map,
                      Map<String, List<SqlFlowChain.Row>> model,
                      Map<String, Integer> hidden,
                      List<SqlFlowChain.Segment> kept, int limit, int droppedRows,
-                     int totalSegments) {
+                     int totalSegments, List<SqlFlowChain.RelSegment> relCandidates) {
             this.map = map;
             this.model = model;
             this.hidden = hidden;
@@ -131,22 +137,32 @@ public final class SqlFlowAssembler {
             this.limit = limit;
             this.droppedRows = droppedRows;
             this.droppedSegments = totalSegments - kept.size();
+            this.relCandidates = relCandidates;
         }
 
-        /** 画布上的行数：与盒高、行坐标同一口径 */
+        /** 画布上的字段行数：RelationRows 挂点不算字段，标题里的"N 字段行"不能被它灌水 */
         private int rowCount() {
-            return count(map);
+            return count(map, false);
+        }
+
+        /** 画布上的表级关系行数：单独报数，它既不进字段行口径、也不进"未画列数"的减法 */
+        private int relRowCount() {
+            return count(map, true);
         }
 
         /** 模型登记的列数：比画布多出来的那部分是"看得见清单、看不见色块" */
         private int modelCount() {
-            return count(model);
+            return count(model, false);
         }
 
-        private static int count(Map<String, List<SqlFlowChain.Row>> rows) {
+        private static int count(Map<String, List<SqlFlowChain.Row>> rows, boolean relation) {
             int total = 0;
             for (List<SqlFlowChain.Row> group : rows.values()) {
-                total += group.size();
+                for (SqlFlowChain.Row row : group) {
+                    if (row.isRelation() == relation) {
+                        total++;
+                    }
+                }
             }
             return total;
         }
@@ -169,7 +185,13 @@ public final class SqlFlowAssembler {
         Map<String, Integer> hidden = new LinkedHashMap<String, Integer>();
         int dropped = 0;
         for (SqlFlowChain.Box box : chain.getBoxes().values()) {
-            List<SqlFlowChain.Row> ranked = new ArrayList<>(box.getRows().values());
+            List<SqlFlowChain.Row> ranked = new ArrayList<>();
+            for (SqlFlowChain.Row row : box.getRows().values()) {
+                // 表级关系行不进排序池：它按名字排可能挤掉真列，预算名额是真列的
+                if (!row.isRelation()) {
+                    ranked.add(row);
+                }
+            }
             Collections.sort(ranked, (left, right) -> {
                 int byWeight = weight(right.getColumnId(), degree)
                         - weight(left.getColumnId(), degree);
@@ -183,8 +205,20 @@ public final class SqlFlowAssembler {
                     new ArrayList<>(ranked.subList(0, Math.min(MODEL_ROWS_CAP, ranked.size()))));
             hidden.put(box.getRelation(), Math.max(0, ranked.size() - MODEL_ROWS_CAP));
         }
+        /*
+         * 表级关系行排在真列后面，预算有富余才画——真列的位置永远不能被它占。
+         * 行被裁掉时表级线退到接在盒上（见 SqlFlowLayout.relEndpoint），不静默消失。
+         */
+        for (SqlFlowChain.Box box : chain.getBoxes().values()) {
+            List<SqlFlowChain.Row> canvas = painted.get(box.getRelation());
+            for (SqlFlowChain.Row row : box.getRows().values()) {
+                if (row.isRelation() && canvas.size() < limit) {
+                    canvas.add(row);
+                }
+            }
+        }
         return new Rows(painted, model, hidden, drawn(chain, painted), limit, dropped,
-                chain.getSegments().size());
+                chain.getSegments().size(), chain.getRelSegments());
     }
 
     private int weight(String column, Map<String, Integer> degree) {
@@ -385,7 +419,7 @@ public final class SqlFlowAssembler {
      * 实体（盒）与它的列清单：模型登记的是"这张表有哪些列"，不是"画布上摆了几行"。
      *
      * <p>两者的差用 {@code uiVisible} 说清楚：没画出来的列在模型里照样查得到（右栏的列清单、
-     * 按列名找字段都靠它），但它没有坐标，前端不能凭空摆上去。
+     * 按列名找字段都靠它），但它没进盒子的行清单、也没有图上标识，前端不能凭空摆一行上去。
      */
     private Map<String, Object> entity(SqlFlowChain.Box box, Rows rows) {
         String relation = box.getRelation();
@@ -409,7 +443,13 @@ public final class SqlFlowAssembler {
         object.put("type", box.getType());
         object.put("qualifiedName", relation);
         object.put("local", box.isLocal());
-        object.put("columnCount", box.getRows().size());
+        int realColumns = 0;
+        for (SqlFlowChain.Row row : box.getRows().values()) {
+            if (!row.isRelation()) {
+                realColumns++;
+            }
+        }
+        object.put("columnCount", realColumns);
         object.put("hiddenColumns", rows.hidden.get(relation));
         object.put("columns", columns);
         return object;
@@ -605,8 +645,7 @@ public final class SqlFlowAssembler {
             for (SqlFlowChain.Row row : box.getRows()) {
                 rowModelIds.put(row.getColumnId(), columnId.get(row.getColumnId()));
             }
-            tables.add(SqlFlowLayout.boxJson(box, relationId.get(relation), rowModelIds,
-                    plan.getRanks().get(relation)));
+            tables.add(SqlFlowLayout.boxJson(box, relationId.get(relation), rowModelIds));
             one(listIdMap, box.getId(), relationId.get(relation));
             for (Map.Entry<String, String> row : box.getRowIds().entrySet()) {
                 one(listIdMap, row.getValue(), columnId.get(row.getKey()));
@@ -620,6 +659,9 @@ public final class SqlFlowAssembler {
                 edgeRelationships.put(edge.getId(), Collections.singletonList(relationship));
             }
         }
+        for (SqlFlowLayout.PlacedRelEdge rel : plan.getRelEdges()) {
+            edges.add(relEdgeJson(rel));
+        }
         Map<String, Object> graph = new LinkedHashMap<String, Object>();
         graph.put("elements", pair(tables, edges));
         graph.put("listIdMap", listIdMap);
@@ -631,6 +673,26 @@ public final class SqlFlowAssembler {
         if (key != null && value != null) {
             index.put(key, Collections.singletonList(value));
         }
+    }
+
+    /**
+     * 表级关系边：自带端点与语句（不走 relationshipIdMap——它背后没有字段关系），
+     * 前端点这条虚线时右栏直接给"哪对表、哪条语句"。
+     */
+    private Map<String, Object> relEdgeJson(SqlFlowLayout.PlacedRelEdge rel) {
+        Map<String, Object> json = new LinkedHashMap<String, Object>();
+        json.put("id", rel.getId());
+        json.put("sourceId", rel.getSourceId());
+        json.put("targetId", rel.getTargetId());
+        json.put("synthetic", false);
+        json.put("kind", "tableRel");
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("from", rel.getRel().getFrom());
+        payload.put("to", rel.getRel().getTo());
+        payload.put("jobId", rel.getRel().getJobId());
+        payload.put("sqlText", context.sqlOf(rel.getRel().getJobId()));
+        json.put("tableRel", payload);
+        return json;
     }
 
     private static Map<String, Object> pair(List<Map<String, Object>> tables,
@@ -732,6 +794,10 @@ public final class SqlFlowAssembler {
         if (plan.getSkipped() > 0) {
             notices.add(plan.getSkipped() + " 段两端落在同一个盒子或同一行（自环），不画线");
         }
+        if (!plan.getRelEdges().isEmpty()) {
+            notices.add(plan.getRelEdges().size() + " 对表只有表级关系没有字段级血缘"
+                + "（RelationRows 行之间的虚线），点虚线看语句");
+        }
         Set<String> parseError = new LinkedHashSet<String>();
         for (String jobId : processId.keySet()) {
             if (context.isParseError(jobId)) {
@@ -743,8 +809,10 @@ public final class SqlFlowAssembler {
         meta.put("focus", focus);
         meta.put("boxCount", chain.getBoxes().size());
         meta.put("rowCount", rows.rowCount());
+        meta.put("tableRelRows", rows.relRowCount());
         meta.put("modelRows", rows.modelCount());
         meta.put("segmentCount", chain.getSegments().size());
+        meta.put("tableRelSegments", plan.getRelEdges().size());
         meta.put("drawn", drawn);
         meta.put("limit", rows.limit);
         meta.put("droppedRows", rows.droppedRows);

@@ -15,8 +15,8 @@ import {
   indexSqlFlow,
   rowIdOfColumnId,
 } from './sqlflowModel.js';
-import { createPop } from './sqlflowPop.js';
-import { paintSqlFlow } from './sqlflowView.js';
+import { createBar } from './sqlflowBar.js';
+import { mountSqlFlow } from './sqlflowView.js';
 import { EDGE_STYLE, derivationLabel, ink, layerColor } from './badges.js';
 import {
   renderColumn,
@@ -45,7 +45,11 @@ const ui = {
   parseSql: document.getElementById('parse-sql'),
   parseOut: document.getElementById('parse-out'),
   legend: document.getElementById('legend'),
-  pop: document.getElementById('sqlflow-pop'),
+  bar: document.getElementById('sqlflow-bar'),
+  stage: document.getElementById('sqlflow'),
+  locate: document.getElementById('sqlflow-locate'),
+  locateInput: document.getElementById('locate-input'),
+  locateItems: document.getElementById('locate-items'),
   scanError: document.getElementById('scan-error'),
   scanDir: document.getElementById('scan-dir'),
   status: document.getElementById('status'),
@@ -68,40 +72,35 @@ const state = {
   parsedColumn: null,
   /** 这一次画图本身要交代的退化说明（多少列没画、多少段链路没显示） */
   modelWarning: '',
-  /** 字段视图这一份响应：{index, view}，右栏与浮层的证据都从这里查，不再打第二个端点 */
+  /** 字段视图这一份响应：{index, view}，右栏与动作条的证据都从这里查，不再打第二个端点 */
   sqlflow: null,
-  /** 浮层现在贴在哪个字段行上：{rowId, columnId, entityId} */
-  popTarget: null,
+  /** 动作条现在对着哪个字段行：{rowId, columnId, entityId} */
+  barTarget: null,
 };
 
 const cy = create(ui.graph);
 
-const pop = createPop(ui.pop, {
-  /** "只看这一列"是纯客户端裁剪：画布上已有的边就是这次请求的全部结论 */
+const bar = createBar(ui.bar, {
+  /** "只看这一列"是纯客户端裁剪：画布上已有的线就是这次请求的全部结论 */
   chain: guard(() => {
-    if (state.popTarget && state.sqlflow) {
-      state.sqlflow.view.crop(state.popTarget.rowId);
-      showPop(state.popTarget.rowId);
+    if (state.barTarget && state.sqlflow) {
+      showWarning(state.sqlflow.view.crop(state.barTarget.rowId));
+      showBar(state.barTarget.rowId);
     }
   }),
   columns: guard(() => {
-    if (state.popTarget && state.sqlflow) {
-      listEntity(state.popTarget.entityId);
+    if (state.barTarget && state.sqlflow) {
+      listEntity(state.barTarget.entityId);
     }
   }),
   reset: guard(() => {
     if (state.sqlflow) {
       showWarning(state.sqlflow.view.reset());
     }
-    pop.hide();
+    showBar(state.barTarget && state.barTarget.rowId);
   }),
-});
-
-/* 浮层跟着画布走：pan/zoom 之后原来的屏幕坐标就作废了 */
-cy.on('pan zoom drag', () => {
-  if (pop.visible() && state.popTarget) {
-    placePop(state.popTarget.rowId);
-  }
+  /** 收起 = 连这次选中一起撤，不是只把条子藏掉 */
+  close: guard(clearRowSelection),
 });
 
 /* 取数在 await 处会让出线程，慢的那次不能盖掉后点的：画之前比序号，过期就收手。 */
@@ -117,11 +116,11 @@ let renderSeq = 0;
  */
 function showWarning(result) {
   /*
-   * 裁剪是画布当前的状态，不是图本身的说明：浮层收起后（点画布空白）用户只剩一堆重排过的盒子，
+   * 裁剪是画布当前的状态，不是图本身的说明：动作条收起后（点画布空白）用户只剩一堆重排过的盒子，
    * 标题却还写着"全部字段"。所以 cropped 必须跟着进这一行，复位后自然消失。
    */
   state.modelWarning = [result.modelWarning,
-    result.cropped ? '当前只画选中字段的通路（点浮层「复位」还原整片）' : ''].filter(Boolean).join('；');
+    result.cropped ? '当前只画选中字段的通路（点动作条「复位」还原整片）' : ''].filter(Boolean).join('；');
   paintFraming(result.framing);
 }
 
@@ -136,7 +135,29 @@ function setWarn(text) {
   ui.warn.textContent = text || '';
 }
 
-watchResize(cy, paintFraming);
+/*
+ * 字段视图盖在画布上时，表级那个观察者得闭嘴：cytoscape 里还留着上一张表级图
+ * （字段视图不再往它身上塞东西），容器一变尺寸 fit(cy) 照样报"放不下 N 个节点"——
+ * 那句话讲的是用户根本没在看的图。
+ */
+watchResize(cy, (framing) => {
+  if (!state.sqlflow) {
+    paintFraming(framing);
+  }
+});
+
+/*
+ * 字段视图不在 cytoscape 上，上面那个观察者对它无效：画布一变宽，
+ * "放得下/放不下"的结论就过期了，得单独盯着 #sqlflow 重问一次。
+ * 只重算 framing 和居中留白，不改用户手动定的缩放倍率。
+ */
+if (window.ResizeObserver) {
+  new ResizeObserver(() => {
+    if (state.sqlflow && state.sqlflow.view) {
+      paintFraming(state.sqlflow.view.refit().framing);
+    }
+  }).observe(ui.stage);
+}
 
 function fail(error) {
   console.error(error);
@@ -368,16 +389,21 @@ function setGraphTitle(text) {
 }
 
 /**
- * 换到表级画法之前，把字段级留下的浮层与裁剪句柄一起清掉。
+ * 换到表级画法之前，把字段级留下的动作条与裁剪句柄一起清掉。
  *
- * 浮层是挂在 .canvas 上的 DOM，不随 cytoscape 的元素消失；留着它而 state.sqlflow.view
- * 还指向上一份图，点「只看这一列」就会拿旧行号去裁新图——新图上谁也找不到，
- * 于是整张画布被 display:none 掉（实测踩过：白屏 + 一句过期的告警）。
+ * 动作条是钉在画布上的 DOM，画布换内容它不会自己消失；留着它而 state.sqlflow.view
+ * 还指向上一份图，点「只看这一列」就会拿旧行号去裁新图。字段视图的 DOM 也在 host 里，
+ * 不拆掉就会盖在表级图上（它是 inset:0 的绝对定位层）。
  */
 function dropSqlFlow() {
+  if (state.sqlflow && state.sqlflow.view) {
+    state.sqlflow.view.dispose();
+  }
   state.sqlflow = null;
-  state.popTarget = null;
-  pop.hide();
+  state.barTarget = null;
+  bar.hide();
+  ui.stage.hidden = true;
+  ui.locate.hidden = true;
 }
 
 async function drawTableGraph(seq) {
@@ -439,64 +465,152 @@ async function drawColumnGraph(seq) {
   /*
    * 选中的那一列未必属于 state.table：点邻居盒里的一行只改 state.column（这片邻域仍以选中的
    * 那张表为中心）。把"表 X + Y 的列名"原样打过去只能得到一个在 X 里不存在的列，所以不同源时
-   * 交完整标识给 focus：邻域照 X 裁，焦点保那一列。
+   * 交完整标识给 focus：邻域照 X 裁，焦点保那一列。手打的深链允许只写裸列名（column=vin），
+   * 它讲的就是 state.table 的那一列。
    */
   const picked = state.column || '';
   const prefix = `${state.table}.`;
-  const sameTable = picked.startsWith(prefix);
+  const bare = picked && !picked.includes('.');
+  const column = bare ? picked : (picked.startsWith(prefix) ? picked.slice(prefix.length) : '');
+  const focus = bare || column ? '' : picked;
   const data = await api.sqlflowGraph({
     table: state.table,
-    column: sameTable ? picked.slice(prefix.length) : '',
-    focus: sameTable ? '' : picked,
+    column: column,
+    focus: focus,
     depth: depth(),
   });
   if (seq !== renderSeq) {
     return;
   }
+  /*
+   * 回给画布的焦点一律是完整标识：前端拿它反查图上那一行（rowIdOfColumnId 只认 table.column），
+   * 直接拿裸列名去查只会得到 null——请求发得出去、图也画得出来，唯独那一行不亮、动作条也不出。
+   */
   state.payload = data;
-  showSqlFlow(data, `${state.column || `${state.table} 全部字段`} 的字段链路`, state.column);
+  showSqlFlow(data, picked ? `${picked} 的字段链路` : `${state.table} 全部字段的链路`,
+    bare ? `${prefix}${picked}` : picked);
 }
 
 /**
  * 一份响应画一张图：快照的字段视图和试解析的字段视图走同一条路径。
  *
- * focus 是列的完整标识（table.column）：服务端按它裁邻域，前端再把"只留这一列的通路"落到实处——
- * 这就是浮层第一个按钮的结论，选中了字段就先进来。
+ * focus 是列的完整标识（table.column）：服务端按它裁邻域，前端把那一行选中——
+ * 选中只是染色 + 出证据，要不要"只留这一列"归动作条第一个按钮管。
+ * 上一版在这里直接 crop，用户带着一个字段进来，看到的是一片只剩三行的图，
+ * 找不到自己刚才在看什么。
  */
 function showSqlFlow(data, heading, focus) {
   const meta = data.metaInfo || {};
   const summary = data.summary || {};
+  dropSqlFlow();
   state.sqlflow = { index: indexSqlFlow(data), view: null };
-  state.popTarget = null;
-  pop.hide();
+  ui.stage.hidden = false;
+  ui.locate.hidden = false;
+  fillLocate(state.sqlflow.index);
   /*
-   * 标题报的必须是画布上真有的东西：超上限时服务端只给模型不给几何（tables 是空的），
+   * 标题报的必须是画布上真有的东西：超上限时服务端只给模型不给落位（tables 是空的），
    * 这时候照念 metaInfo.boxCount 就是"602 表盒"配一张白画布。
+   *
+   * 没带 focus 进来时替用户挑一个"最有故事"的列先讲起来（开场即有一条约自己的链路亮着，
+   * 而不是一张全灰的图）——标题跟着换成那一列，图上亮的就是标题说的。
    */
-  setGraphTitle(meta.drawn === false ? `${heading}（没画：只给数据模型，见下方说明）`
-    : `${heading}（${meta.boxCount || 0} 表盒 / ${meta.rowCount || 0} 字段行 / `
+  const story = focus ? null : storyRow(state.sqlflow.index);
+  const shownHeading = story ? `${story.label} 的字段链路` : heading;
+  setGraphTitle(meta.drawn === false ? `${shownHeading}（没画：只给数据模型，见下方说明）`
+    : `${shownHeading}（${meta.boxCount || 0} 表盒 / ${meta.rowCount || 0} 字段行 / `
       + `${summary.relationship || 0} 条关系）`);
-  drawLegend('column', state.maxLayer);
-  const view = paintSqlFlow(cy, data, sqlflowHandlers());
-  state.sqlflow.view = view;
-  showWarning(view);
+  drawLegend('column', state.maxLayer, null, meta.tableRelSegments);
+  state.sqlflow.view = mountSqlFlow(ui.stage, data, sqlflowHandlers());
   const rowId = focus ? rowIdOfColumnId(state.sqlflow.index, focus) : null;
-  if (rowId) {
-    view.crop(rowId);
-    focusRow(rowId);
-    showPop(rowId);
+  if (!rowId) {
+    const view = state.sqlflow.view;
+    /*
+     * 带着一个列进来却一行都没亮，得说是为什么：这个标识可能压根不在模型里（手打的深链），
+     * 也可能在模型里却被行预算裁在了盒子外面。标题已经写了这一列，只念"N 列未画"那种
+     * 通用交代，用户读不出自己找的那一列到底在不在。
+     */
+    if (focus) {
+      view.modelWarning = [view.modelWarning, `${focus} 不在这次的画布上`
+        + '（标识不存在，或被行预算裁在盒外）：只画了邻域，没有可高亮的行'].filter(Boolean).join('；');
+      showWarning(view);
+      return;
+    }
+    if (story) {
+      pickRow(story.rowId, story.modelId);
+      return;
+    }
+    showWarning(view);
+    return;
   }
+  pickRow(rowId, state.sqlflow.index.rows.get(rowId).modelId);
 }
 
 /**
- * 浮层要跟的是"那一行的完整身份"，不只是图上标识：
- * 三个动作各读一个字段（裁剪读 rowId、列清单读 entityId、标题读 columnId），
- * 少填一个就在 placePop 里空指针。
+ * 开场讲哪一个故事：在这次请求给的关系里挑一条"既有人喂它、又往下传"的目标列。
+ *
+ * 口径固定否则开场亮哪行就成了玄学：聚合 > 表达式 > 直通，能继续往下游讲的加半档，
+ * 同分取标识最小的那个。挑不出来（全图一条关系都没有）就什么都不选，保持全图无高亮。
+ */
+function storyRow(index) {
+  const weight = { AGGREGATE: 0, EXPRESSION: 1, IDENTITY: 2, CONSTANT: 3, POSITIONAL: 4 };
+  const relationships = [...index.relationships.values()];
+  let best = null;
+  relationships.forEach((rel) => {
+    const target = (rel || {}).target || {};
+    const rowId = index.rowIdOfColumn.get(target.id);
+    if (!rowId || !index.rows.has(rowId)) {
+      return;
+    }
+    const keepsGoing = relationships.some((other) => (other.sources || [])
+      .some((source) => source.id === target.id));
+    const score = (weight[rel.derivation] === undefined ? 9 : weight[rel.derivation])
+      - (keepsGoing ? 0.5 : 0);
+    const key = String(target.id || '');
+    if (!best || score < best.score || (score === best.score && key < best.key)) {
+      const column = index.columns.get(target.id);
+      best = {
+        score,
+        key,
+        rowId,
+        modelId: target.id,
+        label: (column && column.qualifiedName) || key,
+      };
+    }
+  });
+  return best;
+}
+
+/** 定位搜索的候选：画布上真有的盒（含中间站）与画出来的字段，qualifiedName 就是取值 */
+function fillLocate(index) {
+  ui.locateItems.textContent = '';
+  const seen = new Set();
+  const add = (value, label) => {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    const option = document.createElement('option');
+    option.value = value;
+    option.label = label;
+    ui.locateItems.appendChild(option);
+  };
+  index.boxes.forEach((box) => add(box.qualifiedName, `表 · ${box.name}`));
+  index.rows.forEach((row) => {
+    const column = index.columns.get(row.modelId);
+    if (column) {
+      add(column.qualifiedName, `字段 · ${column.name}`);
+    }
+  });
+}
+
+/**
+ * 动作条对着的是"那一行的完整身份"，不只是图上标识：
+ * 三个动作各读一个字段（裁剪读 rowId、列清单读 entityId、标题读 columnId）。
  */
 function focusRow(rowId) {
   const row = state.sqlflow.index.rows.get(rowId) || {};
   const column = state.sqlflow.index.columns.get(row.modelId) || {};
-  state.popTarget = {
+  state.barTarget = {
     rowId,
     columnId: column.qualifiedName || rowId,
     entityId: column.entityId,
@@ -505,10 +619,29 @@ function focusRow(rowId) {
 
 function sqlflowHandlers() {
   return {
-    onRow: guard((rowId, data) => pickRow(rowId, data.modelId)),
-    onBox: guard((boxId, data) => pickBox(data)),
-    onEdge: guard((edgeId) => {
-      pop.hide();
+    onRow: guard((rowId, column) => {
+      if (column && column.kind === 'relation') {
+        pickRelationRow(rowId, column);
+        return;
+      }
+      pickRow(rowId, column.modelId);
+    }),
+    onBox: guard((boxId, box) => pickBox(box)),
+    onEdge: guard((edgeId, edge) => {
+      /*
+       * 表级关系虚线背后没有字段关系，evidenceOfEdge 只会得到空：它的证据就是
+       * 边上自带的"哪对表、哪条语句、SQL 原文"。
+       */
+      if (edge && edge.kind === 'tableRel' && edge.tableRel) {
+        const rel = edge.tableRel;
+        renderTableEdge(ui.detail, {
+          source: rel.from,
+          target: rel.to,
+          jobId: rel.jobId,
+          sqlText: rel.sqlText,
+        });
+        return;
+      }
       const rows = evidenceOfEdge(state.sqlflow.index, edgeId);
       if (rows.length) {
         renderEdge(ui.detail, rows, `${rows[0].from} → ${rows[0].to}`);
@@ -516,12 +649,33 @@ function sqlflowHandlers() {
         renderEmpty(ui.detail, '这条线背后没有解析出的关系：它是中间站之间的一跳，点两端的字段行看证据。');
       }
     }),
-    onBlank: guard(() => pop.hide()),
+    /** 缩放是渲染层的事，只有"放不下"那句说明要回灌到告警条 */
+    onFrame: (framing) => paintFraming(framing),
+    /** 点空白 = 结束这次以该列为中心的查看：染色、动作条、裁剪一起撤 */
+    onBlank: guard(clearRowSelection),
   };
 }
 
 /**
- * 点一行 = 全部在本地完成：换右栏证据、描高亮、把浮层贴上去。
+ * 点 RelationRows 行：它不是某一列，右栏没有"列证据"可给——讲清这一行是什么、
+ * 下一步该点什么（相连的虚线），比硬套一个字段卡诚实。
+ */
+function pickRelationRow(rowId, column) {
+  const view = state.sqlflow.view;
+  state.barTarget = {
+    rowId,
+    columnId: `${column.qualifiedName} · RelationRows`,
+    entityId: null,
+  };
+  view.select(rowId);
+  renderEmpty(ui.detail, `${column.qualifiedName} 的表级关系行：它不代表某一列。`
+    + '连在它上面的虚线是「只有表级关系、没有字段级血缘」的表对——点那条虚线看是哪条语句。');
+  showWarning(view);
+  bar.show(state.barTarget.columnId, '点与它相连的虚线看表对与语句');
+}
+
+/**
+ * 点一行 = 全部在本地完成：换右栏证据、把这一列的上下游染出来、动作条出现。
  *
  * 不打请求：这次请求给的就是这一片的全部结论，再打一次只会拿到同一份。
  */
@@ -540,26 +694,24 @@ function pickRow(rowId, columnModelId) {
     syncHash();
   }
   focusRow(rowId);
-  setHot(cy, rowId);
+  bag.view.select(rowId);
   renderColumn(ui.detail, entityCard(bag.index, card.entityId), card);
-  showPop(rowId);
+  showBar(rowId);
 }
 
-/** 浮层贴回它跟着的那一行：裁剪会重排，行号一变位置就得重算 */
-function showPop(rowId) {
-  showWarning(state.sqlflow.view);
-  placePop(rowId);
-}
-
-function placePop(rowId) {
-  const node = cy.getElementById(rowId);
-  if (!node.nonempty()) {
-    pop.hide();
+/** 动作条钉在角落，只有文案跟着选区走：裁没裁、下一步能点什么，都在这一行讲清 */
+function showBar(rowId) {
+  if (!state.sqlflow || !state.sqlflow.view) {
     return;
   }
-  const at = node.renderedPosition();
-  const target = state.popTarget;
-  pop.show(at.x, at.y, `${target.columnId}（点动作条外任意处可收起）`);
+  showWarning(state.sqlflow.view);
+  if (!rowId || !state.barTarget) {
+    bar.hide();
+    return;
+  }
+  bar.show(state.barTarget.columnId, state.sqlflow.view.cropped
+    ? '当前只画这一列的通路，点「复位」还原整片'
+    : '悬停只在原地染色，点「只看这一列」才裁掉其余');
 }
 
 /**
@@ -568,19 +720,37 @@ function placePop(rowId) {
  * 语句内关系（CTE/子查询/函数盒）不是能按名字寻址的表，打过去只能得到 400，
  * 所以它不进选表这条路。
  */
-function pickBox(data) {
-  pop.hide();
+function pickBox(box) {
+  clearRowSelection();
   if (state.view === 'parsed-column') {
     // 试解析只认字段 focus，没有"以某表为中心重新取一片"这条路；
     // 这份响应本来就是整段 SQL 的结论，就地列字段比打快照端点诚实。
-    listEntity(data.modelId);
+    listEntity(box.modelId);
     return;
   }
-  if (!data.local && data.table) {
-    openColumnView(data.table, null);
+  if (!box.local && box.qualifiedName) {
+    openColumnView(box.qualifiedName, null);
     return;
   }
-  listEntity(data.modelId);
+  listEntity(box.modelId);
+}
+
+/**
+ * 结束这次"以某一列为中心"的查看：染色、动作条、裁剪、告警条里那句"只画这一列"四样一起收。
+ *
+ * 只 bar.hide() 不 deselect 会留下用户看不懂的亮色——他不知道自己为什么在看这三行。
+ */
+function clearRowSelection() {
+  const view = state.sqlflow.view;
+  state.barTarget = null;
+  /* 裁剪也算这次选中的一部分：留着裁过的图又收走动作条，告警里那句
+     "点动作条「复位」还原整片"就指向一个已经不存在的按钮。 */
+  if (view.cropped) {
+    view.reset();
+  }
+  view.deselect();
+  bar.hide();
+  showWarning(view);
 }
 
 /** "列出字段"：模型登记了什么就列什么，没画进盒子的那几行标出来 */
@@ -648,7 +818,7 @@ function sqlflowDetail(columnId, tableId) {
   return true;
 }
 
-function drawLegend(kind, maxLayer, extraNote) {
+function drawLegend(kind, maxLayer, extraNote, tableRelCount) {
   ui.legend.textContent = '';
   const swatch = (color, label) => {
     const span = document.createElement('span');
@@ -671,12 +841,22 @@ function drawLegend(kind, maxLayer, extraNote) {
     /* 图例逐项从 EDGE_STYLE 生成：这张表漏过 UNNAMED——语料里有未命名列边，
        画布按默认色画了出来，图例却不认识它。键即语义，加一种加工方式就自动进图例。 */
     Object.keys(EDGE_STYLE).forEach((derivation) =>
-      swatch(EDGE_STYLE[derivation]['line-color'],
+      swatch(EDGE_STYLE[derivation].color,
         `${derivation} ${derivationLabel(derivation)}`));
     note('一表一盒、一行一字段，线连字段行不连盒子；盒顶色带就是该表所在的层');
-    note('点字段行=只画这一列的通路（含中间跳），点盒顶表名=以那张表为中心展开');
-    note('点线=按名字没对上（UNNAMED/STAR），虚线=需要人工确认（CONSTANT/UNRESOLVED）');
+    note('悬停=染出这一列的上下游，点字段行=选中并在右栏看证据，点动作条「只看这一列」才裁图');
+    note('点线=看这一跳的加工方式与 SQL 原文，点盒顶表名=以那张表为中心展开');
     note('虚线暗盒 = 语句内中间关系（CTE/子查询/UNNEST），由边的 hops 显形，一段段仍属同一条边');
+    note('左上角搜索框能定位到表或字段：选中即换以它为中心的一片');
+    /*
+     * 图例不许说画布上没有的东西：RelationRows 虚线只有真的存在时才讲得着，
+     * 常驻这一行等于叫用户去找一条不存在的虚线。
+     */
+    if (tableRelCount) {
+      note(`RelationRows 虚线行 = 两表只有表级关系、没有字段级血缘：这一片 ${tableRelCount} 对，`
+        + '点虚线看是哪条语句');
+    }
+    note('Ctrl+滚轮或左下角 ＋／− 缩放，点「适应」回到放得下的比例');
   }
   if (extraNote) {
     note(extraNote);
@@ -827,7 +1007,7 @@ function guard(fn) {
 
 async function resetSelection() {
   leaveParsed();
-  pop.hide();
+  bar.hide();
   state.table = null;
   state.column = null;
   syncHash();
@@ -845,6 +1025,21 @@ function download(name, href) {
 }
 
 function exportPng() {
+  /*
+   * 两张图是两种画法：表级在 cytoscape 的 canvas 上，字段级是 DOM + SVG。
+   * 字段级的 PNG 由 sqlflowView 自己照量出来的坐标再画一遍 canvas——
+   * 同一份数字画两遍，导出的才和屏幕上的是同一张图。
+   */
+  if (state.sqlflow && state.sqlflow.view) {
+    const href = state.sqlflow.view.png();
+    if (href) {
+      download(`lineage-${state.view}-${Date.now()}.png`, href);
+      return;
+    }
+    // 字段视图盖在表级图上：这时候退回 cy.png() 会导出一张用户根本没看见的表级图
+    setWarn('这一片没画盒子，没有可导出的字段图');
+    return;
+  }
   if (!cy.nodes().length) {
     setWarn('当前没有可导出的图');
     return;
@@ -928,6 +1123,29 @@ document.querySelectorAll('#view-tabs button').forEach((button) => {
 });
 
 ui.search.addEventListener('input', debounce(guard(loadTables), 250));
+ui.locateInput.addEventListener('change', guard(() => {
+  const picked = ui.locateInput.value.trim();
+  if (!picked || !state.sqlflow || !state.sqlflow.view) {
+    return;
+  }
+  const index = state.sqlflow.index;
+  const rowId = rowIdOfColumnId(index, picked);
+  if (rowId && index.rows.has(rowId)) {
+    /* 字段命中：走点行同一条路（选中、染色、右栏证据、动作条），输入框清掉等下一次 */
+    pickRow(rowId, index.rows.get(rowId).modelId);
+    ui.locateInput.value = '';
+    return;
+  }
+  const entityId = index.entityIdByName.get(picked);
+  const box = entityId
+    ? [...index.boxes.values()].find((candidate) => candidate.modelId === entityId) : null;
+  if (box) {
+    state.sqlflow.view.revealBox(box.id);
+    ui.locateInput.value = '';
+    return;
+  }
+  /* 没命中就不清输入：datalist 只列画布上真有的值，留着文本用户好改 */
+}));
 ui.layerFilter.addEventListener('change', guard(loadTables));
 ui.onlyUnresolved.addEventListener('change', guard(loadTables));
 ui.depth.addEventListener('change', guard(refresh));
@@ -943,7 +1161,7 @@ document.getElementById('rescan').addEventListener('click', guard(async () => {
   const data = await api.scan(dir);
   state.table = null;
   state.column = null;
-  pop.hide();
+  bar.hide();
   // 快照换了，上一段临时解析结果也就没有对照意义了
   state.parse = null;
   state.parsedColumn = null;

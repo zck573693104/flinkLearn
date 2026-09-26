@@ -3,6 +3,7 @@ package com.bigdata.lineage.web.sqlflow;
 import com.bigdata.lineage.graph.ColumnLink;
 import com.bigdata.lineage.graph.GraphNode;
 import com.bigdata.lineage.graph.LineageGraph;
+import com.bigdata.lineage.graph.TableLink;
 import com.bigdata.lineage.parser.model.ColumnDerivation;
 
 import java.util.ArrayList;
@@ -26,15 +27,31 @@ import java.util.Set;
  */
 final class SqlFlowChain {
 
-    /** 盒子里的一行：一个字段，或聚合函数盒那一行"结果列" */
+    /** 表级关系行的显示文案：与对方同形，读法在图例里交代 */
+    static final String RELATION_ROW_LABEL = "RelationRows";
+
+    /**
+     * 为表级伙伴造的空盒上限：这类盒一列都没有，只有关系行。大快照里一张中枢表
+     * 可能挂几十个，不设上限就会把 BOX_CAP 顶爆、整张图拒绝出画。
+     */
+    private static final int REL_BOX_CAP = 24;
+
+    /** 盒子里的一行：一个字段，聚合函数盒那一行"结果列"，或表级关系行 */
     static final class Row {
 
         private final String columnId;
         private final String column;
+        /** 表级关系行不是模型列：不进右栏字段清单、没有模型标识，只当表级血缘的挂点 */
+        private final boolean relation;
 
         private Row(String columnId, String column) {
+            this(columnId, column, false);
+        }
+
+        private Row(String columnId, String column, boolean relation) {
             this.columnId = columnId;
             this.column = column;
+            this.relation = relation;
         }
 
         String getColumnId() {
@@ -43,6 +60,10 @@ final class SqlFlowChain {
 
         String getColumn() {
             return column;
+        }
+
+        boolean isRelation() {
+            return relation;
         }
     }
 
@@ -86,6 +107,12 @@ final class SqlFlowChain {
         private void addRow(String columnId, String column) {
             if (!rows.containsKey(columnId)) {
                 rows.put(columnId, new Row(columnId, column));
+            }
+        }
+
+        private void addRelationRow(String key) {
+            if (!rows.containsKey(key)) {
+                rows.put(key, new Row(key, RELATION_ROW_LABEL, true));
             }
         }
     }
@@ -136,8 +163,36 @@ final class SqlFlowChain {
         }
     }
 
+    /** 表级关系段：两端是关系标识（不是列标识），连线挂在两盒的 RelationRows 行之间 */
+    static final class RelSegment {
+
+        private final String from;
+        private final String to;
+        private final String jobId;
+
+        private RelSegment(String from, String to, String jobId) {
+            this.from = from;
+            this.to = to;
+            this.jobId = jobId;
+        }
+
+        String getFrom() {
+            return from;
+        }
+
+        String getTo() {
+            return to;
+        }
+
+        String getJobId() {
+            return jobId;
+        }
+    }
+
     private final Map<String, Box> boxes = new LinkedHashMap<String, Box>();
     private final List<Segment> segments = new ArrayList<Segment>();
+    /** 只有表级血缘的表对：列级通路覆盖不到的地方，RelationRows 行把它们连起来 */
+    private final List<RelSegment> relSegments = new ArrayList<RelSegment>();
 
     private SqlFlowChain() {
     }
@@ -151,7 +206,107 @@ final class SqlFlowChain {
         for (ColumnLink link : links) {
             chain.walk(graph, link, views);
         }
+        chain.expandRelations(graph, views);
         return chain;
+    }
+
+    /**
+     * 表级关系行与表级关系段：一对表之间有 {@code TableLink} 却没有任何列级通路时，
+     * 两盒各补一行 {@code RelationRows}，段连在两行之间。
+     *
+     * <p>为什么只补"没有列级通路"的对：列级通路本身已经把这对表连起来了，再画一条表级线
+     * 就是同一件事说两遍。可达性按列级段算——就算那条通路的行被预算裁掉了，模型里它仍在，
+     * 表级线不该替它出场。
+     *
+     * <p>伙伴表一个列都没上过路径时（join 键只进 WHERE/ON 的表最典型），它连盒都没有——
+     * 这正是字段视图原先"凭空消失"的盲区，所以给它造一个只有 RelationRows 行的盒。
+     * 造盒有独立上限：大快照里一张中枢表可能挂几十个这种伙伴，放任下去会把
+     * {@code BOX_CAP} 顶爆，让原本画得好好的图整张拒绝出画。
+     */
+    private void expandRelations(LineageGraph graph, Set<String> views) {
+        Map<String, Set<String>> adjacency = boxSuccessors();
+        Set<String> seen = new LinkedHashSet<String>();
+        int created = 0;
+        for (TableLink link : graph.getTableLinks()) {
+            String from = link.getFrom();
+            String to = link.getTo();
+            if (from == null || to == null || from.equals(to)) {
+                continue;
+            }
+            if (!seen.add(from + '>' + to)) {
+                continue;
+            }
+            Box source = boxes.get(from);
+            Box target = boxes.get(to);
+            // 语句内关系（CTE/子查询/函数盒）不是表级血缘的合法端点，整对放弃
+            if ((source != null && source.isLocal()) || (target != null && target.isLocal())) {
+                continue;
+            }
+            boolean left = source != null;
+            boolean right = target != null;
+            if (!left && !right) {
+                continue;
+            }
+            if (left && right && reachable(adjacency, from, to)) {
+                continue;
+            }
+            /*
+             * 一端不在画布上：给它造一个只有关系行的盒。造不出来（超上限）就整对放弃——
+             * 单端RelationRows行连不到对端，线没有落点。
+             */
+            if (!left) {
+                if (created >= REL_BOX_CAP) {
+                    continue;
+                }
+                source = ensureBox(graph, from, views);
+                created++;
+            }
+            if (!right) {
+                if (created >= REL_BOX_CAP) {
+                    continue;
+                }
+                target = ensureBox(graph, to, views);
+                created++;
+            }
+            relSegments.add(new RelSegment(from, to, link.getJobId()));
+        }
+        for (RelSegment rel : relSegments) {
+            boxes.get(rel.getFrom()).addRelationRow(relationRowKey(rel.getFrom()));
+            boxes.get(rel.getTo()).addRelationRow(relationRowKey(rel.getTo()));
+        }
+    }
+
+    /** 取一个已存在的盒，或为表级伙伴造一个空盒（之后只装 RelationRows 行） */
+    private Box ensureBox(LineageGraph graph, String relation, Set<String> views) {
+        Box box = boxes.get(relation);
+        if (box == null) {
+            box = box(relation, displayName(graph, relation), typeOf(graph, relation, views),
+                    graph.getNode(relation) != null && graph.getNode(relation).isLocal());
+        }
+        return box;
+    }
+
+    private static boolean reachable(Map<String, Set<String>> successors, String from, String to) {
+        Set<String> seen = new LinkedHashSet<String>();
+        java.util.Deque<String> queue = new java.util.ArrayDeque<String>();
+        seen.add(from);
+        queue.push(from);
+        while (!queue.isEmpty()) {
+            for (String next : successors.getOrDefault(queue.pop(), java.util.Collections.emptySet())) {
+                if (next.equals(to)) {
+                    return true;
+                }
+                if (seen.add(next)) {
+                    queue.push(next);
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 表级关系行的标识后缀：列标识是 {@code table.column}，双冒号不可能撞上真列 */
+    static String relationRowKey(String relation) {
+        return relation + "::relation";
     }
 
     Map<String, Box> getBoxes() {
@@ -160,6 +315,10 @@ final class SqlFlowChain {
 
     List<Segment> getSegments() {
         return segments;
+    }
+
+    List<RelSegment> getRelSegments() {
+        return relSegments;
     }
 
     private void walk(LineageGraph graph, ColumnLink link, Set<String> views) {
@@ -313,7 +472,7 @@ final class SqlFlowChain {
         return dot < 0 ? String.valueOf(columnId) : columnId.substring(dot + 1);
     }
 
-    /** 盒级邻接：布局排的是盒子，段落在盒子上就是"谁的下游" */
+    /** 盒级邻接：布局排的是盒子，段落在盒子上就是"谁的下游"；表级段也参与分层 */
     Map<String, Set<String>> boxSuccessors() {
         Map<String, Set<String>> successors = new LinkedHashMap<String, Set<String>>();
         for (Segment segment : segments) {
@@ -323,6 +482,10 @@ final class SqlFlowChain {
                 continue;
             }
             successors.computeIfAbsent(from, key -> new LinkedHashSet<String>()).add(to);
+        }
+        for (RelSegment rel : relSegments) {
+            successors.computeIfAbsent(rel.getFrom(), key -> new LinkedHashSet<String>())
+                    .add(rel.getTo());
         }
         return successors;
     }

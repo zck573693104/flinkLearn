@@ -514,13 +514,147 @@ input::placeholder { color: var(--dimmer); }
   background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .02) 0 1px, transparent 1px 3px);
 }
 
-/* 字段行的跟随式动作条：贴在点中的那一格旁边。
-   底色用 --ink-2 而不是半透明——它压在线条上，透过去就会和边糊成一片。 */
-.pop {
+/* 字段链路的宿主：绝对定位盖在 #graph 上，而不是把 #graph 收起来——
+   cytoscape 的容器一旦 display:none，它缓存的宽高就归零，换回表级图时 fit 会算错。 */
+#sqlflow {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background-color: #060a10;
+  background-image:
+    radial-gradient(120% 90% at 50% 0%, rgba(79, 208, 245, .07), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .03) 0 1px, transparent 1px 30px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, .03) 0 1px, transparent 1px 30px);
+}
+
+#sqlflow[hidden] { display: none; }
+
+.slf-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.slf-scroll.grabbing { cursor: grabbing; user-select: none; }
+.slf-sizer { position: relative; }
+.slf-stage { position: relative; transform-origin: 0 0; font-family: var(--font-mono); }
+.slf-wires { position: absolute; left: 0; top: 0; z-index: 1; overflow: visible; }
+.slf-edge .slf-hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+
+/* 一个表盒：宽度定死，高度等于内容——这正是整套改动的理由。
+   190px 是"一行一个字段读得出 20 个字符左右的列名"；列间距由 js 量这个宽度得出，
+   不要再在 sqlflowView.js 里抄一遍数字，两份宽度一定有一份会走样。 */
+.slf-box {
+  position: absolute;
+  z-index: 2;
+  width: 190px;
+  padding-bottom: 4px;
+  background: var(--box-fill);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+}
+
+.slf-box.local { border-style: dashed; border-color: var(--local-line); }
+.slf-box.on { border-color: var(--acid-dim); }
+.slf-stage.tracing .slf-box:not(.on) { opacity: .34; }
+.slf-stage.tracing .slf-edge:not(.on):not(.soft) { opacity: .08; }
+
+/* 表名那条带：盒子的定位父级只有 .slf-box 一个（head/row 都不设 position），
+   这样行和文字报给导出用的 offsetTop/offsetLeft 才是"离盒顶多远"，一个坐标系。 */
+.slf-head {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding-right: 26px;
+  background: var(--local-fill);
+  color: var(--local-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.slf-box:not(.local) .slf-head { color: var(--node-ink); }
+.slf-name { min-width: 0; padding-left: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.slf-layer {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  font-size: 9.5px;
+  font-weight: 500;
+  opacity: .72;
+}
+
+.slf-row {
+  display: flex;
+  align-items: center;
+  height: 18px;
+  margin: 1px 4px 0;
+  padding: 0 6px;
+  background: var(--row-fill);
+  border: 1px solid var(--row-line);
+  color: var(--row-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.slf-col { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.slf-row:hover { border-color: var(--cyan); }
+.slf-row.on { background: var(--acid); border-color: var(--acid); color: var(--ink-0); }
+.slf-row.soft { border-color: var(--acid-dim); }
+.slf-row.sel { box-shadow: 0 0 0 2px var(--cyan); }
+.slf-stage.tracing .slf-row:not(.on):not(.soft) { opacity: .5; }
+
+/* RelationRows 行：它是表级血缘的挂点、不是某一列——虚线描边 + 暗字，和真列一眼分开 */
+.slf-row.rel {
+  border-style: dashed;
+  color: var(--dim);
+  font-style: italic;
+}
+.slf-row.rel:hover { border-color: var(--cyan); }
+.slf-row.rel.on { color: var(--ink-0); font-style: normal; }
+
+/* 定位搜索命中一个盒：闪一下边框告诉用户"就是这格"，不滚动选择器也不弹层 */
+.slf-box.flash { animation: slf-flash 1.1s ease-out 1; }
+@keyframes slf-flash {
+  0%, 55% { border-color: var(--acid); box-shadow: 0 0 0 2px var(--acid-dim); }
+  100% { border-color: var(--line-strong); box-shadow: none; }
+}
+
+.slf-zoom {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--ink-2);
+  box-shadow: var(--shadow);
+  font-family: var(--font-mono);
+}
+
+.slf-zoom button { font-size: 11px; padding: 2px 7px; }
+.slf-zoom-val { min-width: 38px; color: var(--dim); font-size: 10.5px; text-align: right; }
+
+/* 字段动作条：钉在画布右上角，按住把手可以拖走。
+   四个角各有其主：左上角永远是链路起点（层 0 从那儿开始排），钉在那里就是压住用户正在看的
+   那一列；右下角是"放不下"的告警条，左下角给缩放控件。底色用 --ink-2 而不是半透明——
+   它压在线条上，透过去就会和边糊成一片。 */
+.bar {
   position: absolute;
   z-index: 3;
-  min-width: 214px;
-  max-width: 274px;
+  right: 12px;
+  top: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 7px;
+  min-width: 236px;
+  max-width: 360px;
   padding: 7px 9px 8px;
   border: 1px solid var(--line-strong);
   border-left: 2px solid var(--acid);
@@ -529,35 +663,79 @@ input::placeholder { color: var(--dimmer); }
   font-family: var(--font-mono);
 }
 
-.pop-title {
+/* 作者样式里的 display 会盖掉 UA 的 [hidden]{display:none}：不写这条，
+   hidden 属性就是个装饰——页面一打开动作条就带着空标题挂在右上角。 */
+.bar[hidden] { display: none; }
+
+.bar-grip {
+  grid-row: 1 / span 2;
+  align-self: start;
+  padding: 2px 0 0;
+  color: var(--dimmer);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+}
+
+.bar.dragging .bar-grip { cursor: grabbing; }
+
+/* 标题独占一行：把它和按钮并排放，41 个字符的列标识会折成六行，条子变成一块砖 */
+.bar-title {
+  grid-column: 2;
   margin: 0 0 6px;
+  overflow: hidden;
   color: var(--txt-strong);
   font-size: 11.5px;
   line-height: 1.35;
-  word-break: break-all;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.pop-tools {
+.bar-tools {
+  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
 }
 
-.pop-tools button {
+.bar-tools button {
   font-size: 11px;
   padding: 3px 7px;
 }
 
-.pop-tools .close {
+.bar-tools .close {
   margin-left: auto;
   padding: 3px 6px;
   color: var(--dim);
 }
 
-.pop-tools .close:hover {
+.bar-tools .close:hover {
   color: var(--red);
 }
+
+/* 定位搜索钉在画布左上角：动作条占了右上角，层 0 从左上起步——所以只留窄窄一条，
+   不去压第一列的盒；[hidden] 必须显式写，浮层默认 display 会盖过 hidden 属性 */
+.locate {
+  position: absolute;
+  z-index: 3;
+  left: 12px;
+  top: 12px;
+}
+.locate[hidden] { display: none; }
+.locate input {
+  width: 200px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--cyan);
+  background: var(--ink-2);
+  color: var(--txt);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.locate input::placeholder { color: var(--dim); }
+.locate input:focus { outline: none; border-color: var(--cyan); }
 
 .legend {
   display: flex;

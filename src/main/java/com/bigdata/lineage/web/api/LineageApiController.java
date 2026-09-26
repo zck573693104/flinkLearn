@@ -145,7 +145,13 @@ public class LineageApiController {
         return ApiResponse.ok(data);
     }
 
-    /** 字段级链路子图；不传 column 就是整张表的所有字段 */
+    /**
+     * 字段级链路子图；不传 column 就是整张表的所有字段。
+     *
+     * @deprecated 前端已改走 {@code /api/sqlflow/graph}（字段视图的形状——一表一盒一行一字段、
+     * 中间站显形——通用节点集表达不了）。端点按"REST 契约不动"的约定保留，供外部调用方过渡。
+     */
+    @Deprecated
     @GetMapping("/graph/column")
     public ApiResponse columnGraph(@RequestParam String table,
                                    @RequestParam(required = false) String column,
@@ -156,7 +162,13 @@ public class LineageApiController {
         return ApiResponse.ok(subgraph.columnView());
     }
 
-    /** 单条字段边的全部证据：加工方式、中间跳、哪份文件哪条语句、原文 */
+    /**
+     * 单条字段边的全部证据：加工方式、中间跳、哪份文件哪条语句、原文。
+     *
+     * @deprecated 前端已改走 {@code /api/sqlflow/graph}，边证据随响应的 relationshipIdMap 一次给全。
+     * 端点按"REST 契约不动"的约定保留，供外部调用方过渡。
+     */
+    @Deprecated
     @GetMapping("/edge/column")
     public ApiResponse edgeEvidence(@RequestParam String from, @RequestParam String to) {
         LineageStore.Snapshot snapshot = store.current();
@@ -220,11 +232,11 @@ public class LineageApiController {
     }
 
     /**
-     * 字段级血缘：一次调用给全"数据模型 + 布局 + 统计"。
+     * 字段级血缘：一次调用给全"数据模型 + 落位 + 统计"。
      *
      * <p>与 {@code /api/graph/column} 的分工：那个端点是给通用图浏览器用的抽象节点集，布局留在
-     * 前端；这一个把盒子和每一行的坐标都算好了，前端只照坐标画。字段级血缘的形状（一表一盒、
-     * 盒里一行一列、中间站显形）本来就不是通用图能表达的东西，与其让前端再推一遍，不如服务端
+     * 前端；这一个把盒子分几层、同层第几个、每一行的标识都算好了，前端只把这些格子和行量成像素。
+     * 字段级血缘的形状（一表一盒、盒里一行一列、中间站显形）本来就不是通用图能表达的东西，与其让前端再推一遍，不如服务端
      * 一次说清。不传 table 就是整个快照的字段边——超出可画规模时 {@code metaInfo.drawn=false}，
      * 模型和统计照给，只给告警不画。
      *
