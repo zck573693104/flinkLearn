@@ -796,7 +796,7 @@ public final class SqlFlowAssembler {
         }
         if (!plan.getRelEdges().isEmpty()) {
             notices.add(plan.getRelEdges().size() + " 对表只有表级关系没有字段级血缘"
-                + "（RelationRows 行之间的虚线），点虚线看语句");
+                + "（表级虚线）：点虚线看是哪条语句");
         }
         Set<String> parseError = new LinkedHashSet<String>();
         for (String jobId : processId.keySet()) {
