@@ -494,6 +494,12 @@ lineage:
 
 `columns[].id` 是 `盒id_c行序号`（`b0_c0`），边的 `sourceId/targetId` 用的就是它（预算没收进行盒的列，端点退化成盒id，线连盒不连空位）；`relationshipIdMap` 是"这条线背后有哪几条关系"，右栏逐跳证据按它去 `relationships` 里取，**前端不再打第二个请求**。标识全部取 `b0 / b0_c0 / e0` 这种形状：它们要当 DOM `id` 和 SVG 端点用，含 `.` `::` 的名字在 `querySelector` 里会炸（§8.13）。
 
+上面那份例子是 M4 期抄的，RelationRows（§8.15）之后契约多了三处，形状以这行为准：
+
+- 行可以不是列：盒里多一种 `columns[]` 项 `{id,name:"RelationRows",kind:"relation",qualifiedName:"ods.dim",modelId:null}`——`qualifiedName` 就是那个关系标识（没有列段），`modelId` **显式为 null**（背后没有列模型；前端 `indexSqlFlow` 因此必须跳过 null 键，见 §8.16 第 3 条）。它不进 `summary.column`、不进 `metaInfo.rowCount`、不进"N 列未画"的减法。
+- 边可以是表级：`{id,sourceId,targetId,kind:"tableRel",tableRel:{from,to,jobId,sqlText}}`，它**刻意不出现在 `relationshipIdMap` 里**（它背后没有字段关系可取证据），右栏因此走独立分支。
+- `metaInfo` 多两个数：`tableRelRows`（画布上的挂点数）与 `tableRelSegments`（这一片里有几对表只有表级关系）；后者 >0 才允许图例与告警提虚线（§8.16 第 2 条）。
+
 
 证据字段的四条口径（前端实现期踩过，写死在这里）：
 
@@ -982,8 +988,44 @@ src/main/resources/static/
 - 快照冷启动 `#view=column&table=kafka_user_app_data`（不带 column）：自动选中 `app_func`（EXPRESSION、有下游）——标题"app_func 的字段链路"、通路亮、动作条与右栏证据齐出；试解析冷启动同理选中 `dwd.tgt.a`。
 - 定位搜索输入 `kafka_user_app_data.operation` → `sel=1`、锥内 10 行亮；输入 `ods.src.a` → `sel=1`。
 - 回归：hover 预览（无选中时 `soft` 2 行 1 边，`pointerout` 擦干净）、点行钉选、点空白清选区、导出 PNG 全部照旧。
-- `mvn -o clean test` **287 绿 / 0 failure / 0 error**（283 + 新增 4）；语料快照全部表对都有字段级通路，`tableRelSegments=0`——RelationRows 只在它该出现的地方出现，不扰动既有出图。
+- `mvn -o clean test` **287 绿 / 0 failure / 0 error**（283 + 新增 4）；语料快照全部表对都有字段级通路，`tableRelSegments=0`——RelationRows 只在它该出现的地方出现，不扰动既有出图。**（这条数成立于 01:15 那次 `clean test`；此后 13:34 重打 jar 时没再跑测试，中间几小时的改动没被覆盖。从零构建的复跑与由此揪出的五处见 §8.16。）**
 
+
+### 8.16 回归 §8.15 这一轮（RelationRows）：五处修 + 两处措辞（2026-09-26）
+
+**要求**（用户原话）："**重新回归代码，是否有 bug**"。口径照 §8.14：先逐行读工作树 diff，再 clean 构建 + 语料基线，最后真浏览器逐条读数。解析层一行没动。
+
+**这一轮的工作树是并行的**：§8.15 那套 RelationRows 由另一个会话写进同一个工作树（当时未提交）。逐行复核时把它当第三方代码读，每条结论都拿实测钉住；动手前就"这四条由谁改""要不要停掉 8080 上的进程做 clean 重建"跟用户对了范围。**写这段时它还是一棵脏树，收尾时对方把整棵树提交成了 `346626a`**——下表五处修复连带各自的注释一起进了那个 commit（`git grep relRowCount 346626a`、`git grep "row.modelId !== null" 346626a` 都命中），留在工作树的只有下面那两处措辞和本文档。并行会话的常态如此：**提交归属和代码归属不是一回事**，要复验的始终是树里的代码。
+
+**五处定性：全部修**。
+
+| # | 症状 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 标题报"3 表盒 / **4 字段行** / 1 条关系"——两行 `RelationRows` 被算进了字段行，而它恰恰不是字段 | `SqlFlowAssembler.Rows.rowCount()` 把画布那份 `map` 里的行全数了，不看 `Row.isRelation()`。§8.15 只守住了**模型**侧（`modelCount()` 喂 `summary.column`、`entity().columnCount` 喂列清单），画布侧漏了 | 拆成 `rowCount()`（只数真列）+ `relRowCount()`（只数挂点），共用一个带 `relation` 布尔的 `count()`；`metaInfo` 加 `tableRelRows` 把挂点单独报出去。实测改后标题 `2 字段行`，画布仍 3 盒 4 行 |
+| 2 | 整个 `sql/` 快照 14 张表**一对表级关系都没有**，图例却常驻一行"RelationRows 虚线行 = 两表只有表级关系、没有字段级血缘：这一片 0 对，点虚线看是哪条语句"——叫用户去画布上找不存在的东西 | `drawLegend('column', …)` 里那条 `note()` 无条件执行，没看 `metaInfo.tableRelSegments` | 加第四个参数 `tableRelCount`，为 0 就不写这行；原本挂在同一条 note 上的"搜索框能定位到表或字段"拆成独立的无条件一行，别跟着一起消失。实测快照视图 `hasNote:false`（14 条图例项照旧），试解析单边 JOIN 视图带"这一片有 1 对" |
+| 3 | 冷启动"自动讲故事"能把开场选中的那一行领到一个 `RelationRows` 挂点上 | `indexSqlFlow()` 给每行都往 `rowIdOfColumn` 塞键，挂点没有 `modelId` → 塞进去一个 **null 键**；下一次 `target.id` 为空的 relationship（服务端本来就允许）反查就中 | 只在 `row.modelId` 非 null/undefined 时登记。挂点归 `rows` 管，不归"列标识 → 图上标识"这张表管 |
+| 4 | `SqlFlowLayout` 表级边循环里两条 `plan.skipped++` 分支永远走不到，却占着"因两端列未画而暂不显示"的计数与文案 | 那两个守卫是照**字段边**的写法抄来的：字段边要判两端的行列没画进盒子，而 `expandRelations()` 只给**成对**的盒补挂点，某端本来没盒就当场 `ensureBox` 造一个（造不出整对放弃，不留单端段），行标识又带盒前缀——两个不同的盒挤不出同一个 id，这里既没有"未画上"也没有"自环" | 删两条死分支，注释写明为什么此处无话可说（`REL_BOX_CAP` 的放弃是整对的，不是留一条断边） |
+| 5 | `view.boxCount` / `view.rowCount` 零引用 | §8.15 加挂点时往 live `view` 和 `idleView` 各留一份，消费者一个没有 | 两处都删（`Plan.getRanks()` 这类真在用的没碰） |
+
+**两处措辞**（不改行为，只让它别讲画布上没有的东西）：告警那半句从"（RelationRows 行之间的虚线）"改成"（表级虚线）"——`relEndpoint()` 在挂点被行预算挤掉时把线接到**盒子**上，说死"行之间"是一句有时不成立的承诺；图例同口径改口为"靠它对出虚线"。
+
+**判为设计内的几处**（写下来免得下一轮再猜）：挂点不进 `planRows` 排序池、只吃真列剩下的预算（复核确认没有别的路径绕过去）；`expandRelations` 用**列级可达闭包**（`boxSuccessors()` BFS）判"这对表是否已有字段通路"而不是判"有没有一条直接段"——折过来的间接通路算已经连上，再画表级线就是说两遍；表级边不进 `relationshipIdMap`（背后没有字段关系），前端 `renderTableEdge` 走 `hasOwnProperty('sqlText')` 这条独立分支，与它自洽；`ensureBox` 撞上限时整对放弃，宁可少画一对挂点也不让 `BOX_CAP` 被顶爆成整张图 `drawn:false`；点挂点时"列出字段"给"这个盒子里没有可列的字段"——诚实，不编清单。
+
+**复验读数**（真浏览器；先 `curl /js/main.js | grep 本轮新注释` 证明服务的是这一版，jar 由 clean 构建产出）：
+
+- 试解析单边 JOIN（`INSERT INTO dwd.tgt SELECT s.a FROM ods.src s JOIN ods.dim d ON s.k = d.k`）：3 盒 / 4 行（2 真列 + 2 挂点）/ 2 条边（`e0` 实线 `ods.src.a → dwd.tgt.a`、`e1` 虚线 dim→tgt），SVG 524×182，盒高 `[47, 47, 66]`；标题 `dwd.tgt.a 的字段链路（3 表盒 / 2 字段行 / 1 条关系）`（第 1 条改完的读数）。
+- 点 `e1` 虚线 → 右栏表级边：`来源表 ods.dim / 目标表 dwd.tgt` + jobId + 语句原文带 `marks=["tgt","dim"]`；点挂点行 → 动作条标题 `ods.dim · RelationRows`、四个按钮齐出，右栏"它不代表某一列"，`列出字段` 给"这个盒子里没有可列的字段"，`只看这一列` 收成 2 盒 / 2 挂点 / **0 个空盒**，`复位` 回 3/4/2。
+- 锥的方向：选中 dim 挂点亮 `b1_c0`(sel+on) 与 `b2_c1`(on)，`b2_c0` **不亮**；选中真列时闭包不含任何挂点行（`b0_c0 → lit b0_c0, b2_c0`）。表级关系行不参与列级闭包，两边都不串味。
+- 快照 `user_app_data`：图例不再有 RelationRows 那行（第 2 条的读数）；行预算对账 `25 画 + 13 未画 = 38 = modelRows` 平；§8.14 第 9 条那句"不在这次的画布上（标识不存在，或被行预算裁在盒外）"对 `column=zzz.nope` 仍然照出。
+- 全程 `list_console_messages` 计数 **0**；两张截图人眼复核（挂点斜体虚线描边、虚线 `6 4` 长虚不与任何加工色撞）。
+
+**验收口径上的三处**（比这五条更值得记）：
+
+1. **绿灯要按"哪一版树"记账**。§8.15 那句"287 绿"是 01:15 那次 `clean test` 的数：`target/classes` 的 mtime 就停在 01:15:05，而 jar 是 13:34:35 重打的——**包重打了、测试没重跑**，中间几个小时的改动没被任何从零构建覆盖过。本轮把从零构建又跑了两轮以上，最后一轮产出 jar 14:07:38（`target/generated-sources` 14:07:25、`surefire-reports` 14:07:35 是全新一批，**287 / 0 failure / 0 error / 0 skipped**），287 才算立在当前这版树上。§11 那条 clean 闸门在并行会话与前端场景下同样不打折。
+2. **"亮了谁"用 `classList` 判，别用截图眼看**。第 4 号疑点（"选中挂点把隔壁真列也带亮了"）就是这么造出来的**假案**：JPEG 里那一行看着发青，实测 `b2_c0` 的 `classList` 是空串。像素负责回答"画没画出来"，语义才负责回答"亮的是谁"。
+3. **rAF 掉到 1 帧/400ms 时不复验 resize 类断言**（§8.14 第 1 坑的延续）：窗口被遮挡的那几轮，上一轮第 9 条（refit 重算手动倍率下的居中距）拿不到读数，于是**沿用上一轮结论而不重报**——该处代码本轮一行没动。
+
+**回归**：`mvn -o -Dmaven.repo.local=D:/maven clean package` 从零构建两轮以上，每轮 **287 绿 / 0 failure / 0 error / 0 skipped**。最后一轮的 jar 是 14:07:38 那一版，它同时带着上面那两处措辞，也正是浏览器复验时服务的那一版——`curl /js/main.js | grep 表级挂点` 命中，14:08 抓到的 `metaInfo.warning` 已是改后的"（表级虚线）：点虚线看是哪条语句"（§8.14 那条"先证明服务的是这一版"的闸门，本轮在并行场景下又用了一次）。总数 283→287 全部落在 §8.15 那四条新用例上，本轮只往 `tableOnlyPairsGetRelationRows` 补了一对自洽断言（挂点数 `== metaInfo.tableRelRows`、真列数 `== metaInfo.rowCount`）、往 `unpaintedColumnsSurviveInTheModel` 的"在画布"计数跳过挂点，**没有新增用例数**。语料基线在 §11.1 口径下逐项相等（15 文件 / 14 输出表 / 2369 原始列边 / 2327 图列边 / 6 表边 / 12 带列表 / maxLayer 1 / 环 `[]` / 四类泄漏探针 0 / 0 WARN），且 14 张表逐个 `tableRelSegments=0`——RelationRows 不扰动既有出图，这也是第 2 条能确诊为"图例说谎"的原因。vendored 依赖仍只有 cytoscape，`/api/overview` 仍是 `D:\project\flinkLearn\sql`。
 
 ## 9. 里程碑与工作量
 
@@ -1049,7 +1091,7 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - Web（M3 已按此执行）：`GraphAssemblerTest`/`CorpusScannerTest` 钉住裁剪与扫描器契约，9 个端点全部真起 jar 用 `curl` 冒烟（见 §7.4）。`@WebMvcTest`/`@SpringBootTest` 都依赖 `spring-boot-test`+`spring-test`，**离线仓库一个版本都没有**，不要计划走这条路。
 - 前端：**真实浏览器点一遍**（M4 验收），不做"我以为能渲染"的声明。
 - 前端静态完整性（`web/StaticAssetIntegrityTest`，4 例）：没有构建步骤就没有编译器兜底，所以在 JUnit 里扫 `static/` 下的 JS——块注释逐字符配对（防 §8.8 那次让整站白屏的 `*/`）、`import './x.js'` 目标存在、`index.html` 的 `src`/`href` 资源存在、`getElementById` 的 id 在 DOM 里存在。四类失效都是"Java 测试全绿、页面全白"，只能这样钉住。
-- 构建纪律（既有记忆约束）：报"通过"之前必 `mvn clean test`，不信陈旧 `target/`。
+- 构建纪律（既有记忆约束）：报"通过"之前必 `mvn clean test`，不信陈旧 `target/`。**并行会话写的绿灯同样要自己复跑**——§8.16 那次工作树里挂着"287 绿"，实测 `target/classes` 的 mtime 比 jar 早两个小时（包重打、测试没重跑），clean 复跑两次才让这个数成立。判据：`ls -l --full-time target/classes/… jar` 比时间戳，别比谁口气大。
 - 涉密语料纪律：任何来自 `D:\ai coding\...` 的 SQL 只在 git 忽略的 `tmpdb/` 复现，**不复制进仓库、不写进用例、不提交**；提交前删除 `tmpdb/`（本分支截至 2026-09-21 已清空，M5 复现时重新拷贝）。
 
 ### 11.1 M5 涉密语料巡检实测（2026-09-21）
@@ -1128,3 +1170,4 @@ CREATE TABLE IF NOT EXISTS column_lineage (
 - [x] 16. 字段血缘的四个手势与两处记账都得自己说清（§8.12）：点盒顶表名**必须换 hash 并重画**（`data.table` 来自几何里的 `qualifiedName`，Java 侧断言它是 `metaInfo.ranks` 的键）；换视图必须把字段级的浮层与裁剪句柄一起清掉，且旧裁剪对不上新图时**一个元素都不许多隐藏**（`crop()` 先判 `nonempty()`）；选中别人家的列后改深度，请求得把完整标识交给 `focus=` 而不是 `column=`；`drawn=false` 与自环两处不许静默——标题改口"没画"、告警报"N 段两端落在同一个盒子（自环），不画线"。跨表那次的实测链路是 `kafka_user_app_data.operation → user_app_data.mcu_software_ver`（`e17`，非 synthetic），25 行几何与模型标识 **0 处错位**。`mvn -o clean package` **283 绿**、console **0 error**、语料基线逐项一致。
 - [x] 17. 字段图的像素只活在一个地方（§8.13）：`/api/sqlflow/graph` 回**网格不给像素**（盒 `{id,name,qualifiedName,type,local,layer,slot,modelId,columns}`、边 `{id,sourceId,targetId,synthetic}`），Java 里由**反向断言**钉住——盒不许有 `x/y/width/height`、格子不许有 `x/y`；渲染是 DOM 盒 + 一层 SVG 边，**字段视图不再创建 cytoscape 元素**，缩放是 `scale()` 放大整张纸所以字号恒定（fit 下限 0.8×12px）；量法必须两趟（成批读 → 成批写 → 再画线）；`只看这一列` 的染色必须是祖先∪后代闭包而不是无向可达；动作条钉右上角、可拖动，`×` 必须连染色一起撤（`clearRowSelection`）而不是只藏条子；空字段视图导出 PNG 必须告警而不是回落到表级图。`SqlFlowAssemblerTest` 19 条、总数 **283 绿**，语料基线逐项一致，真浏览器（有视口的那个）逐条读数见 §8.13。
 - [x] 18. 尺寸与状态改完必须自己说清（§8.14）：凡新增带 `display` 的浮层，`[hidden]{display:none}` 得跟着补一条，验收读 computed `display` 而不是 `el.hidden`；拖拽类监听三条退出路径（`pointerup/pointercancel/失去捕获`）都得解；容器变窄时**手动倍率下的居中距必须重算**（实测 `z` 保持 90%、`ml 987px→0`），且此时不许由看不见的表级图来报"放不下 N 个节点"；`×` 在裁剪态必须连裁剪一起撤；深链要的列没画进盒子时**必须点名**，不许只留一句"N 列未画"。总数 **283 绿**、语料基线逐项一致、真浏览器 console **0 error**；复验前先证明服务的是本轮的包（`curl /js/main.js | grep 新注释`），resize 类断言前先证明标签页没被冻结（rAF 帧数 > 0）。
+- [x] 19. 挂点不许冒充字段，图例不许许愿（§8.16）：`RelationRows` **不进**"N 字段行"也不进"N 列未画"两个口径（`rowCount()`/`modelCount()` 只数真列，挂点由 `metaInfo.tableRelRows` 单独报数）；图例与告警只在 `tableRelSegments>0` 时才提表级虚线，且措辞不得承诺"虚线一定夹在两行之间"——挂点被行预算挤掉时 `relEndpoint()` 把线接在盒子上；`rowIdOfColumn` 里不许出现 null 键（否则开场自动选中的那一行能被领到一个挂点上）；布局里不许留走不到的 `skipped++` 分支。实测：试解析单边 JOIN 画布 3 盒 4 行而标题报"2 字段行"、快照视图图例不再出现该行、点挂点后四按钮齐且 `只看这一列` 收出 **0 个空盒**、锥内不含隔壁真列。`SqlFlowAssemblerTest` **23 条**、总数 **287 绿**（从零构建两轮以上，不是停在旧 `target/` 上的数）、14 张表 `tableRelSegments` 全 0、语料基线逐项一致、console **0 error**。
